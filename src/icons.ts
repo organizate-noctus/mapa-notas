@@ -24,6 +24,8 @@ export const icons = {
   check: svg('<path d="m5 12.5 4.5 4.5L19 7.5"/>', 18),
   undo: svg('<path d="M9 6 4.5 10.5 9 15M5 10.5h9a5 5 0 0 1 0 10h-3"/>', 18),
   bell: svg('<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15l1.5-2ZM10 20.5a2.2 2.2 0 0 0 4 0"/>', 18),
+  mic: svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/>', 18),
+  stop: svg('<rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/>', 18),
   close: svg('<path d="m6 6 12 12M18 6 6 18"/>', 16),
   tag: svg('<circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21"/>', 18),
   mark: svg(

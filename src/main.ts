@@ -27,6 +27,7 @@ import { defaultRemind, detectEvents, fmtWhen, remindOptions, type Proposal } fr
 import { renderCalendar } from './calendar'
 import { enableNotifications, notificationsState, startReminders } from './reminders'
 import { disablePush, enablePush, pushActive, pushSupported, resyncPush } from './push'
+import { Recorder, loadModel, modelCached, transcribe } from './voice'
 
 const root = document.querySelector<HTMLDivElement>('#app')!
 
@@ -55,6 +56,7 @@ root.innerHTML = `
     <div class="bar" id="bar" hidden>
       <button class="btn ghost icon" id="back" title="Volver">${icons.back}</button>
       <button class="btn small" id="mode"></button>
+      <button class="btn small" id="mic"></button>
       <span class="sp"></span>
       <button class="btn ghost icon danger" id="del" title="Borrar nota">${icons.trash}</button>
     </div>
@@ -164,6 +166,7 @@ const calNotif = $('calnotif')
 const toastEl = $('toast')
 const docEl = $('doc')
 const pulseEl = $('pulse')
+const micBtn = $<HTMLButtonElement>('mic')
 const tabs: Record<string, HTMLElement> = { none: $('tabnotes'), map: $('mapbtn'), cal: $('calbtn') }
 
 type Panel = 'none' | 'map' | 'cal'
@@ -551,6 +554,113 @@ $('new').onclick = async () => {
 
 $('mapbtn').onclick = () => openPanel('map')
 $('calbtn').onclick = () => openPanel('cal')
+
+type VoiceState = 'idle' | 'loading' | 'recording' | 'transcribing'
+
+const MAX_DICTADO = 180000
+let voice: VoiceState = 'idle'
+let recorder: Recorder | null = null
+let dictTick: number | undefined
+let dictNoteId: string | null = null
+let dictPos = 0
+let dictStart = 0
+
+function setMic(state: VoiceState, label: string): void {
+  voice = state
+  micBtn.className = state === 'recording' ? 'btn small rec' : 'btn small'
+  micBtn.disabled = state === 'loading' || state === 'transcribing'
+  micBtn.innerHTML = `${state === 'recording' ? icons.stop : icons.mic}${label}`
+}
+
+function micError(err: unknown): string {
+  const name = err instanceof DOMException ? err.name : ''
+  if (name === 'NotAllowedError' || name === 'SecurityError') return 'Permite el micrófono en los ajustes del sitio'
+  if (name === 'NotFoundError') return 'No se encontró ningún micrófono'
+  return err instanceof Error ? err.message : 'Inténtalo de nuevo'
+}
+
+async function insertDictado(text: string): Promise<void> {
+  const id = dictNoteId
+  const note = notes.find((n) => n.id === id)
+  if (!id || !note) return
+  if (!text) {
+    toast('No se entendió nada', 'Habla más cerca del micrófono e inténtalo otra vez')
+    return
+  }
+  const same = id === currentId && !reading && panel === 'none'
+  const base = same ? edEl.value : note.body
+  const pos = same ? Math.min(dictPos, base.length) : base.length
+  const before = base.slice(0, pos)
+  const after = base.slice(pos)
+  const lead = before && !/\s$/.test(before) ? ' ' : ''
+  const trail = after && !/^\s/.test(after) ? ' ' : ''
+  const next = before + lead + text + trail + after
+  if (same) {
+    edEl.value = next
+    const caret = (before + lead + text).length
+    edEl.setSelectionRange(caret, caret)
+    edEl.dispatchEvent(new Event('input'))
+    edEl.focus()
+    return
+  }
+  await saveBody(id, next)
+  notes = await allNotes()
+  renderList()
+  queueSync()
+  toast('Dictado añadido', `A «${titleOf(next)}»`)
+}
+
+async function stopDictado(): Promise<void> {
+  clearInterval(dictTick)
+  const r = recorder
+  recorder = null
+  if (!r) return
+  setMic('transcribing', 'Transcribiendo…')
+  try {
+    const audio = await r.stop()
+    await insertDictado(await transcribe(audio))
+  } catch (err) {
+    toast('No se pudo transcribir', err instanceof Error ? err.message : 'Inténtalo de nuevo')
+  } finally {
+    setMic('idle', 'Dictar')
+  }
+}
+
+micBtn.onclick = async () => {
+  if (voice === 'recording') {
+    await stopDictado()
+    return
+  }
+  if (voice !== 'idle' || !current()) return
+  if (reading) {
+    reading = false
+    renderMain()
+  }
+  dictNoteId = currentId
+  dictPos = edEl.selectionStart ?? edEl.value.length
+  if (!modelCached() && !confirm('Para dictar se descarga el modelo de voz una sola vez (unos 80 MB). Mejor con wifi. ¿Descargar ahora?')) return
+  try {
+    setMic('loading', 'Preparando…')
+    await loadModel((pct) => setMic('loading', `Descargando ${Math.round(pct)}%`))
+    recorder = new Recorder()
+    await recorder.start()
+    dictStart = Date.now()
+    setMic('recording', '0:00')
+    dictTick = window.setInterval(() => {
+      const s = Math.floor((Date.now() - dictStart) / 1000)
+      micBtn.lastChild!.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+      if (Date.now() - dictStart > MAX_DICTADO) void stopDictado()
+    }, 500)
+  } catch (err) {
+    recorder?.cancel()
+    recorder = null
+    clearInterval(dictTick)
+    setMic('idle', 'Dictar')
+    toast('No se pudo dictar', micError(err))
+  }
+}
+
+setMic('idle', 'Dictar')
 
 $('tabnotes').onclick = () => {
   closePanel()
