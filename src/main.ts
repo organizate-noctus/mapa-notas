@@ -26,6 +26,7 @@ import { hideMap, refreshMap, showMap } from './graph'
 import { defaultRemind, detectEvents, fmtWhen, remindOptions, type Proposal } from './events'
 import { renderCalendar } from './calendar'
 import { enableNotifications, notificationsState, startReminders } from './reminders'
+import { disablePush, enablePush, pushActive, pushSupported, resyncPush } from './push'
 
 const root = document.querySelector<HTMLDivElement>('#app')!
 
@@ -407,7 +408,7 @@ async function saveProposal(p: Proposal, remindMin: number, state: EventState): 
 }
 
 function renderCal(): void {
-  calNotif.hidden = notificationsState() !== 'default'
+  void refreshAvisos()
   renderCalendar(calBody, events, {
     openNote: (id) => open(id),
     toggleDone: async (e) => {
@@ -737,10 +738,38 @@ $('esave').onclick = async () => {
   queueSync(500)
 }
 
+async function refreshAvisos(): Promise<void> {
+  if (pushSupported()) {
+    const on = await pushActive()
+    calNotif.hidden = false
+    calNotif.className = on ? 'btn ghost small' : 'btn small'
+    calNotif.innerHTML = `${icons.bell}${on ? 'Avisos activos' : 'Activar avisos'}`
+    return
+  }
+  calNotif.hidden = notificationsState() !== 'default'
+  calNotif.className = 'btn small'
+  calNotif.innerHTML = `${icons.bell}Activar avisos`
+}
+
 calNotif.onclick = async () => {
-  const r = await enableNotifications()
-  if (r === 'denied') toast('Avisos bloqueados', 'Actívalos en los permisos del navegador')
-  renderCal()
+  if (!pushSupported()) {
+    const r = await enableNotifications()
+    if (r === 'denied') toast('Avisos bloqueados', 'Actívalos en los permisos del navegador')
+    await refreshAvisos()
+    return
+  }
+  if (await pushActive()) {
+    if (!confirm('¿Desactivar los avisos en este dispositivo?')) return
+    await disablePush()
+    await refreshAvisos()
+    return
+  }
+  const r = await enablePush()
+  if (r === 'ok') toast('Avisos activados', 'Te avisaremos aunque la app esté cerrada')
+  else if (r === 'nologin') toast('Inicia sesión primero', 'Los avisos se envían a tu cuenta')
+  else if (r === 'denied') toast('Avisos bloqueados', 'Actívalos en los permisos del navegador')
+  else toast('No se pudo activar', 'Inténtalo de nuevo en unos segundos')
+  await refreshAvisos()
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -754,4 +783,5 @@ registerSW({ immediate: true })
 await reload()
 await refreshAccount()
 startReminders(() => events, toast)
+void resyncPush()
 runSync()

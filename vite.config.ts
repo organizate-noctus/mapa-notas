@@ -5,6 +5,9 @@ export default defineConfig({
   base: './',
   plugins: [
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'sw',
+      filename: 'sw.ts',
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
@@ -24,10 +27,9 @@ export default defineConfig({
           { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
-      workbox: {
+      injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2,woff}'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
-        navigateFallback: 'index.html',
       },
     }),
   ],
