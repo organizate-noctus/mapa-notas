@@ -25,6 +25,7 @@ import {
   type CalEvent,
   type EventState,
   type Note,
+  type Repeat,
 } from './db'
 import {
   MAX_TIER,
@@ -42,7 +43,7 @@ import {
 } from './links'
 import { currentEmail, signIn, signOut, signUp, supabase, sync } from './sync'
 import { flyToNode, getTierMax, hideMap, refreshMap, setTierMax, showMap } from './graph'
-import { defaultRemind, detectEvents, fmtWhen, remindOptions, type Proposal } from './events'
+import { REPEAT_LABEL, defaultRemind, detectEvents, fmtWhen, nextOccurrence, remindOptions, type Proposal } from './events'
 import { renderCalendar, type CalHandlers } from './calendar'
 import { renderToday } from './today'
 import { enableNotifications, notificationsState, startReminders } from './reminders'
@@ -154,6 +155,17 @@ root.innerHTML = `
         <button type="button" class="btn" id="dlogout">Cerrar sesión</button>
         <button type="button" class="btn ghost" id="dclose">Cerrar</button>
       </div>
+      <div id="dgbox" hidden>
+        <hr />
+        <strong class="sub">Resumen matinal</strong>
+        <div class="row">
+          <label class="chk"><input type="checkbox" id="dgon" />Avisarme cada mañana</label>
+          <select id="dghour" aria-label="Hora del resumen">
+            ${[6, 7, 8, 9, 10].map((h) => `<option value="${h}">${h}:00</option>`).join('')}
+          </select>
+        </div>
+        <div id="dgmsg"></div>
+      </div>
       <hr />
       <strong class="sub">Copia de seguridad</strong>
       <div class="row">
@@ -187,6 +199,9 @@ root.innerHTML = `
         <input id="etime" type="time" />
       </div>
       <select id="eremind"></select>
+      <select id="erepeat" aria-label="Repetir">
+        ${(Object.entries(REPEAT_LABEL) as [string, string][]).map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}
+      </select>
       <div id="emsg"></div>
       <div class="row">
         <button type="button" class="btn primary" id="esave">Guardar</button>
@@ -689,7 +704,7 @@ function proposalRow(p: Proposal): HTMLElement {
   r.className = 'pr'
   const text = document.createElement('span')
   text.className = 'ptext'
-  text.textContent = `${fmtWhen(p)} — ${p.title}`
+  text.textContent = `${fmtWhen(p)} — ${p.title}${p.repeat !== 'none' ? ` · ${REPEAT_LABEL[p.repeat].toLowerCase()}` : ''}`
   const sel = document.createElement('select')
   for (const [v, label] of remindOptions(p.allDay)) {
     const o = document.createElement('option')
@@ -719,6 +734,7 @@ async function saveProposal(p: Proposal, remindMin: number, state: EventState): 
     remindMin,
     state,
     key: p.key,
+    repeat: state === 'active' ? p.repeat : 'none',
   })
   await reloadEvents()
   if (state === 'active') toast('Evento añadido', `${fmtWhen(p)} — ${p.title}`)
@@ -728,7 +744,14 @@ async function saveProposal(p: Proposal, remindMin: number, state: EventState): 
 const calHandlers: CalHandlers = {
   openNote: (id) => open(id),
   toggleDone: async (e) => {
-    await patchEvent(e.id, { state: e.state === 'done' ? 'active' : 'done' })
+    const rep = e.repeat ?? 'none'
+    if (rep !== 'none' && e.state !== 'done') {
+      const next = nextOccurrence(e.at, rep, Math.max(Date.now(), e.at))
+      await patchEvent(e.id, { at: next, state: 'active' })
+      toast('Hecho', `Próxima vez: ${fmtWhen({ at: next, allDay: e.allDay })}`)
+    } else {
+      await patchEvent(e.id, { state: e.state === 'done' ? 'active' : 'done' })
+    }
     await reloadEvents()
     queueSync(500)
   },
@@ -820,7 +843,20 @@ function open(id: string, startReading = false): void {
   if (!reading) edEl.focus()
 }
 
+async function rollRepeats(): Promise<void> {
+  const limit = Date.now() - 3600000
+  let any = false
+  for (const e of await allEvents()) {
+    const rep = e.repeat ?? 'none'
+    if (rep === 'none' || e.state === 'dismissed' || e.at >= limit) continue
+    await patchEvent(e.id, { at: nextOccurrence(e.at, rep, Date.now()), state: 'active' })
+    any = true
+  }
+  if (any) queueSync(800)
+}
+
 async function reloadEvents(): Promise<void> {
+  await rollRepeats()
   events = await allEvents()
   evKeys = await eventKeys()
   if (panel === 'cal') renderCal()
@@ -1155,7 +1191,35 @@ acctBtn.onclick = async () => {
   $('dmsg').textContent = ''
   await refreshAccount()
   dlg.showModal()
+  void loadDigest()
 }
+
+async function loadDigest(): Promise<void> {
+  const box = $('dgbox')
+  const email = await currentEmail()
+  box.hidden = !email
+  if (!email || !supabase) return
+  const { data, error } = await supabase.from('user_settings').select('digest_enabled, digest_hour').maybeSingle()
+  $('dgmsg').textContent = error ? 'Falta ejecutar el SQL de la fase 5 en Supabase' : ''
+  $<HTMLInputElement>('dgon').checked = data?.digest_enabled ?? true
+  $<HTMLSelectElement>('dghour').value = String(data?.digest_hour ?? 8)
+}
+
+async function saveDigest(): Promise<void> {
+  if (!supabase) return
+  const { data: s } = await supabase.auth.getSession()
+  const uid = s.session?.user.id
+  if (!uid) return
+  const { error } = await supabase.from('user_settings').upsert({
+    user_id: uid,
+    digest_enabled: $<HTMLInputElement>('dgon').checked,
+    digest_hour: Number($<HTMLSelectElement>('dghour').value),
+  })
+  $('dgmsg').textContent = error ? 'No se pudo guardar (¿falta el SQL de la fase 5?)' : 'Guardado'
+}
+
+$('dgon').onchange = saveDigest
+$('dghour').onchange = saveDigest
 
 async function auth(kind: 'in' | 'up'): Promise<void> {
   const email = $<HTMLInputElement>('dmail').value.trim()
@@ -1282,6 +1346,7 @@ $('caladd').onclick = () => {
   eTitle.value = ''
   eDate.value = isoDate(new Date())
   eTime.value = ''
+  $<HTMLSelectElement>('erepeat').value = 'none'
   $('emsg').textContent = ''
   fillRemind()
   edlg.showModal()
@@ -1310,6 +1375,7 @@ $('esave').onclick = async () => {
     remindMin: +eRemind.value,
     state: 'active',
     key: `manual|${crypto.randomUUID()}`,
+    repeat: $<HTMLSelectElement>('erepeat').value as Repeat,
   })
   edlg.close()
   await reloadEvents()

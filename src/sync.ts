@@ -8,6 +8,7 @@ import {
   setMeta,
   type CalEvent,
   type Note,
+  type Repeat,
   type Store,
   type Syncable,
 } from './db'
@@ -54,7 +55,9 @@ const notesSpec: Spec<Note> = {
 const eventsSpec: Spec<CalEvent> = {
   store: 'events',
   table: 'events',
+  optionalCols: ['repeat'],
   fromRow: (r) => ({
+    repeat: (r.repeat ?? 'none') as Repeat,
     id: r.id,
     noteId: r.note_id,
     title: r.title,
@@ -71,6 +74,7 @@ const eventsSpec: Spec<CalEvent> = {
     id: e.id,
     user_id: uid,
     note_id: e.noteId,
+    repeat: e.repeat ?? 'none',
     title: e.title,
     starts_at: e.at,
     all_day: e.allDay,

@@ -1,5 +1,5 @@
 import type { CalEvent } from './db'
-import { fmtTime, fmtWhen } from './events'
+import { REPEAT_LABEL, fmtTime, fmtWhen } from './events'
 import { icons } from './icons'
 
 export interface CalHandlers {
@@ -46,7 +46,9 @@ export function eventRow(e: CalEvent, h: CalHandlers, withDay: boolean): HTMLEle
   del.innerHTML = icons.trash
   del.title = 'Borrar'
   del.onclick = () => h.remove(e)
-  r.append(when, title, ok, del)
+  r.append(when, title)
+  if (e.repeat && e.repeat !== 'none') r.append(el('span', 'rep', `↻ ${REPEAT_LABEL[e.repeat].toLowerCase()}`))
+  r.append(ok, del)
   return r
 }
 

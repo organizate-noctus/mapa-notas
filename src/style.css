@@ -383,6 +383,10 @@ details.folder:not([open]) > summary .ficon { opacity: 0.65; }
 .ev .when { flex: none; min-width: 84px; color: var(--tenue); font-size: 13px; font-variant-numeric: tabular-nums; }
 .ev .etitle { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .ev .etitle.link { cursor: pointer; color: var(--enlace); }
+.ev .rep { flex: none; color: var(--oro-texto); font-size: 12.5px; }
+dialog .chk { display: flex; align-items: center; gap: 10px; flex: 1; font-size: 15px; cursor: pointer; }
+dialog .row .chk { flex: 1.6; }
+#dgmsg { color: var(--tenue); font-size: 13.5px; min-height: 1em; }
 .ev.done .etitle { text-decoration: line-through; color: var(--tenue); }
 
 dialog { border: 1px solid var(--linea); border-radius: 20px; background: var(--superficie); color: var(--texto); padding: 24px; width: min(380px, 92vw); box-shadow: var(--sombra); }

@@ -13,8 +13,10 @@ export interface Note extends Syncable {
 }
 
 export type EventState = 'active' | 'done' | 'dismissed'
+export type Repeat = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly'
 
 export interface CalEvent extends Syncable {
+  repeat?: Repeat
   noteId: string | null
   title: string
   at: number
@@ -159,7 +161,7 @@ export async function eventKeys(): Promise<Set<string>> {
 export async function addEvent(
   e: Omit<CalEvent, 'id' | 'updatedAt' | 'deleted' | 'dirty'>,
 ): Promise<CalEvent> {
-  const ev: CalEvent = { ...e, id: crypto.randomUUID(), updatedAt: Date.now(), deleted: false, dirty: true }
+  const ev: CalEvent = { repeat: 'none', ...e, id: crypto.randomUUID(), updatedAt: Date.now(), deleted: false, dirty: true }
   await putRaw('events', ev)
   return ev
 }
