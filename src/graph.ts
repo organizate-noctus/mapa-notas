@@ -105,7 +105,56 @@ let tierMax = 3
 let byId = new Map<string, N>()
 let noteTags = new Map<string, string[]>()
 
+let focusId: string | null = null
+let focusSet: Set<string> | null = null
+
+function computeFocus(): void {
+  if (!graph || !focusId || !byId.has(focusId)) {
+    focusSet = null
+    if (focusId && !byId.has(focusId)) focusId = null
+    return
+  }
+  const adj = new Map<string, string[]>()
+  for (const l of graph.graphData().links as L[]) {
+    const a = idOf(l.source)
+    const b = idOf(l.target)
+    adj.set(a, [...(adj.get(a) ?? []), b])
+    adj.set(b, [...(adj.get(b) ?? []), a])
+  }
+  const seen = new Set([focusId])
+  let edge = [focusId]
+  for (let d = 0; d < 2; d++) {
+    const next: string[] = []
+    for (const id of edge) {
+      for (const o of adj.get(id) ?? []) {
+        if (seen.has(o)) continue
+        seen.add(o)
+        next.push(o)
+      }
+    }
+    edge = next
+  }
+  focusSet = seen
+}
+
+export const getFocus = (): string | null => focusId
+
+export function setFocus(id: string | null): void {
+  focusId = id
+  computeFocus()
+  applyVisibility()
+  window.setTimeout(() => {
+    fit(700)
+    const n = id ? byId.get(id) : null
+    if (n) {
+      hover(n)
+      window.setTimeout(() => hover(null), 2600)
+    }
+  }, 120)
+}
+
 function visibleId(id: string): boolean {
+  if (focusSet && !focusSet.has(id)) return false
   const n = byId.get(id)
   if (!n) return true
   if (n.kind === 'tag') return n.tier <= tierMax
@@ -141,6 +190,8 @@ export function flyToNode(query: string): string | null {
   if (!hit || !Number.isFinite(hit.x)) return null
   if (!visibleId(hit.id)) {
     tierMax = 3
+    focusId = null
+    focusSet = null
     applyVisibility()
   }
   const x = hit.x ?? 0
@@ -168,7 +219,7 @@ function fit(ms: number): void {
   cx /= nodes.length
   cy /= nodes.length
   cz /= nodes.length
-  let reach = 20
+  let reach = 70
   for (const n of nodes) {
     const d = Math.hypot((n.x ?? 0) - cx, (n.y ?? 0) - cy, (n.z ?? 0) - cz) + radius(n) * 2.2
     if (d > reach) reach = d
@@ -393,6 +444,7 @@ export function refreshMap(notes: Note[]): string {
     noteTags.set(note.id, [...(noteTags.get(note.id) ?? []), tag.id])
   }
   graph.graphData(data)
+  computeFocus()
   applyVisibility()
   if (!fitted) window.setTimeout(() => fit(900), 1400)
   const tags = data.nodes.filter((n) => n.kind === 'tag').length

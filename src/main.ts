@@ -42,7 +42,9 @@ import {
   titleOf,
 } from './links'
 import { currentEmail, signIn, signOut, signUp, supabase, sync } from './sync'
-import { flyToNode, getTierMax, hideMap, refreshMap, setTierMax, showMap } from './graph'
+import { flyToNode, getFocus, getTierMax, hideMap, refreshMap, setFocus, setTierMax, showMap } from './graph'
+import { ADJ_RE, attachmentIds, blobOf, kindOf, saveAttachment, shrink, uploadPending, urlFor } from './files'
+import { openDrawing } from './draw'
 import { REPEAT_LABEL, defaultRemind, detectEvents, fmtWhen, nextOccurrence, remindOptions, type Proposal } from './events'
 import { renderCalendar, type CalHandlers } from './calendar'
 import { renderToday } from './today'
@@ -80,6 +82,9 @@ root.innerHTML = `
       <button class="btn ghost icon" id="back" title="Volver">${icons.back}</button>
       <button class="btn small" id="mode"></button>
       <button class="btn small" id="mic"></button>
+      <button class="btn ghost icon" id="photo" title="Añadir foto">${icons.image}</button>
+      <button class="btn ghost icon" id="draw" title="Dibujar a mano">${icons.brush}</button>
+      <input type="file" id="pfile" accept="image/*" multiple hidden />
       <span class="sp"></span>
       <button class="btn ghost icon" id="hist" title="Historial de versiones">${icons.history}</button>
       <button class="btn ghost icon danger" id="del" title="Borrar nota">${icons.trash}</button>
@@ -97,6 +102,7 @@ root.innerHTML = `
           <div id="nlist"></div>
         </div>
       </div>
+      <button class="btn ghost small" id="nbhd" title="Ver solo lo conectado a esta nota">${icons.hub}Vecindario</button>
     </div>
     <div id="empty">
       ${icons.constellation}
@@ -107,6 +113,7 @@ root.innerHTML = `
     <div class="doc" id="doc" hidden>
       <div class="col">
         <textarea id="ed" hidden spellcheck="false" placeholder="Escribe aquí. Enlaza notas con [[Título]]"></textarea>
+        <div id="atts" hidden></div>
         <article id="pv" hidden></article>
         <section id="prop"></section>
         <section id="bl"></section>
@@ -122,7 +129,8 @@ root.innerHTML = `
             <button type="button" data-t="2">1–2</button>
             <button type="button" data-t="3" class="on">Todo</button>
           </span>
-        </div></div>
+        </div>
+        <div class="card mapctl" id="focuschip" hidden><span id="focustxt"></span><button type="button" class="btn small" id="focusoff">Ver todo</button></div></div>
       <div class="maphint">Arrastra para girar · rueda o pellizco para acercar · toca una nota para abrirla</div>
     </div>
     <div id="todayview" hidden>
@@ -183,6 +191,15 @@ root.innerHTML = `
       <div id="pres"></div>
     </div>
   </dialog>
+  <dialog id="vdlg">
+    <div id="vbox">
+      <img id="vimg" alt="" />
+      <div class="row">
+        <button type="button" class="btn" id="vedit" hidden>${icons.brush}Seguir dibujando</button>
+        <button type="button" class="btn ghost" id="vclose">Cerrar</button>
+      </div>
+    </div>
+  </dialog>
   <dialog id="hdlg">
     <form method="dialog">
       <strong>Historial de versiones</strong>
@@ -219,6 +236,7 @@ const listEl = $('list')
 const qEl = $<HTMLInputElement>('q')
 const edEl = $<HTMLTextAreaElement>('ed')
 const pvEl = $('pv')
+const attsEl = $('atts')
 const blEl = $('bl')
 const propEl = $('prop')
 const barEl = $('bar')
@@ -308,7 +326,10 @@ function toast(title: string, body: string): void {
 toastEl.onclick = () => (toastEl.hidden = true)
 
 function snippet(body: string): string {
-  const lines = body.split('\n').map((l) => l.trim()).filter(Boolean)
+  const lines = body
+    .split('\n')
+    .map((l) => l.replace(ADJ_RE, '').trim())
+    .filter(Boolean)
   return (lines[1] ?? '').replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, '$2$1').slice(0, 80)
 }
 
@@ -350,6 +371,94 @@ function renderList(): void {
   }
 }
 
+let attsKey = ''
+
+function renderAtts(force = false): void {
+  const n = current()
+  const list = n && !reading && panel === 'none' ? attachmentIds(n.body) : []
+  const key = list.map((a) => a.id).join(',')
+  attsEl.hidden = !list.length
+  if (key === attsKey && !force) return
+  attsKey = key
+  attsEl.innerHTML = ''
+  for (const a of list) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'thumb'
+    b.title = a.alt || 'Imagen'
+    const img = document.createElement('img')
+    img.alt = a.alt
+    void urlFor(a.id).then((u) => {
+      if (u) img.src = u
+    })
+    b.append(img)
+    b.onclick = () => void viewAttachment(a.id)
+    attsEl.append(b)
+  }
+}
+
+let viewing = ''
+
+async function viewAttachment(id: string): Promise<void> {
+  const u = await urlFor(id)
+  if (!u) {
+    toast('Imagen no disponible', 'Todavía no se ha descargado. Prueba con conexión y sincroniza')
+    return
+  }
+  viewing = id
+  $<HTMLImageElement>('vimg').src = u
+  $('vedit').hidden = (await kindOf(id)) !== 'draw'
+  const d = $<HTMLDialogElement>('vdlg')
+  if (!d.open) d.showModal()
+}
+
+function insertBlock(text: string): void {
+  if (reading) {
+    reading = false
+    renderMain()
+  }
+  const v = edEl.value
+  const pos = Math.min(edEl.selectionStart ?? v.length, v.length)
+  const before = v.slice(0, pos)
+  const after = v.slice(pos)
+  const lead = before && !before.endsWith('\n') ? '\n\n' : before ? '\n' : ''
+  const trail = after && !after.startsWith('\n') ? '\n\n' : '\n'
+  edEl.value = before + lead + text + trail + after
+  const caret = (before + lead + text + trail).length
+  edEl.setSelectionRange(caret, caret)
+  edEl.dispatchEvent(new Event('input'))
+  edEl.focus()
+}
+
+async function addAttachment(blob: Blob, kind: 'photo' | 'draw'): Promise<void> {
+  if (!current()) return
+  try {
+    const id = await saveAttachment(kind === 'photo' ? await shrink(blob) : blob, kind)
+    insertBlock(`![${kind === 'photo' ? 'foto' : 'dibujo'}](adj:${id})`)
+  } catch {
+    toast('No se pudo añadir', 'No se pudo leer esa imagen')
+  }
+}
+
+async function addImages(files: Iterable<File>): Promise<void> {
+  for (const f of files) if (f.type.startsWith('image/')) await addAttachment(f, 'photo')
+}
+
+async function editDrawing(id: string): Promise<void> {
+  const n = current()
+  const old = await blobOf(id)
+  if (!n || !old) return
+  const out = await openDrawing(old)
+  if (!out) return
+  const nid = await saveAttachment(out, 'draw')
+  const saved = await saveBody(n.id, n.body.split(id).join(nid))
+  if (!saved) return
+  const i = notes.findIndex((x) => x.id === saved.id)
+  notes[i] = saved
+  renderMain()
+  queueSync()
+}
+
 function renderBacklinks(): void {
   const n = current()
   blEl.innerHTML = ''
@@ -370,8 +479,19 @@ function renderBacklinks(): void {
 function renderPreview(): void {
   const n = current()
   if (!n) return
-  const html = marked.parse(renderLinks(n.body), { async: false }) as string
+  const withImgs = n.body.replace(
+    ADJ_RE,
+    (_, alt: string, id: string) =>
+      `<img class="adj" data-adj="${id}" alt="${alt.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)}">`,
+  )
+  const html = marked.parse(renderLinks(withImgs), { async: false }) as string
   pvEl.innerHTML = DOMPurify.sanitize(html)
+  for (const img of pvEl.querySelectorAll<HTMLImageElement>('img[data-adj]')) {
+    void urlFor(img.dataset.adj!).then((u) => {
+      if (u) img.src = u
+      else img.alt = 'Imagen no disponible todavía'
+    })
+  }
   const boxes = [...pvEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
   const tasks = taskLines(n.body)
   if (boxes.length === tasks.length) {
@@ -790,8 +910,10 @@ function renderMain(): void {
     nodePop.hidden = true
     blEl.innerHTML = ''
     propEl.innerHTML = ''
+    attsEl.hidden = true
     return
   }
+  renderAtts()
   if (reading) renderPreview()
   else {
     if (edEl.value !== n.body) edEl.value = n.body
@@ -885,6 +1007,7 @@ async function runSync(): Promise<void> {
   syncing = true
   try {
     const r = await sync()
+    if (r === 'ok' || r === 'partial') await uploadPending().catch(() => {})
     if (r === 'off') statusEl.textContent = 'Solo local'
     else if (r === 'nologin') statusEl.textContent = 'Sin iniciar sesión'
     else {
@@ -940,6 +1063,7 @@ $<HTMLInputElement>('mapq').onkeydown = (e) => {
   if (found) input.blur()
   else toast('No encontrado', `No hay ningún nodo ni nota que contenga «${input.value.trim()}»`)
   syncTierSeg()
+  syncFocusChip()
 }
 
 function paletteItems(query: string): PaletteItem[] {
@@ -983,7 +1107,11 @@ document.addEventListener('keydown', (e) => {
   }
 })
 
-$('mapbtn').onclick = () => openPanel('map')
+$('mapbtn').onclick = () => {
+  setFocus(null)
+  $('focuschip').hidden = true
+  void openPanel('map')
+}
 $('calbtn').onclick = () => openPanel('cal')
 $('foldbtn').onclick = () => openPanel('folders')
 $('todaybtn').onclick = () => openPanel('today')
@@ -1095,6 +1223,72 @@ micBtn.onclick = async () => {
 
 setMic('idle', 'Dictar')
 
+$('photo').onclick = () => $<HTMLInputElement>('pfile').click()
+
+$<HTMLInputElement>('pfile').onchange = async (e) => {
+  const input = e.target as HTMLInputElement
+  const files = [...(input.files ?? [])]
+  input.value = ''
+  await addImages(files)
+}
+
+$('draw').onclick = async () => {
+  if (!current()) return
+  const out = await openDrawing()
+  if (out) await addAttachment(out, 'draw')
+}
+
+edEl.addEventListener('paste', (e) => {
+  const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'))
+  if (!files.length) return
+  e.preventDefault()
+  void addImages(files)
+})
+
+edEl.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
+})
+
+edEl.addEventListener('drop', (e) => {
+  const files = [...(e.dataTransfer?.files ?? [])].filter((f) => f.type.startsWith('image/'))
+  if (!files.length) return
+  e.preventDefault()
+  void addImages(files)
+})
+
+$('vclose').onclick = () => $<HTMLDialogElement>('vdlg').close()
+$<HTMLDialogElement>('vdlg').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) (e.currentTarget as HTMLDialogElement).close()
+})
+$('vedit').onclick = () => {
+  const id = viewing
+  $<HTMLDialogElement>('vdlg').close()
+  void editDrawing(id)
+}
+
+function syncFocusChip(): void {
+  const id = getFocus()
+  const chip = $('focuschip')
+  chip.hidden = !id
+  if (id) {
+    const n = notes.find((x) => x.id === id)
+    $('focustxt').textContent = `Vecindario de «${n ? titleOf(n.body) : 'nota'}»`
+  }
+}
+
+$('nbhd').onclick = async () => {
+  const id = currentId
+  if (!id) return
+  if (panel !== 'map') await openPanel('map')
+  setFocus(id)
+  syncFocusChip()
+}
+
+$('focusoff').onclick = () => {
+  setFocus(null)
+  syncFocusChip()
+}
+
 $('tabnotes').onclick = () => {
   closePanel()
   if (window.matchMedia('(max-width: 720px)').matches) currentId = null
@@ -1159,6 +1353,7 @@ edEl.oninput = async () => {
   fitEditor()
   renderList()
   renderBacklinks()
+  renderAtts()
   clearTimeout(propTimer)
   propTimer = window.setTimeout(renderProposals, 700)
   queueSync()
@@ -1170,6 +1365,11 @@ pvEl.onchange = (e) => {
 }
 
 pvEl.onclick = async (e) => {
+  const img = (e.target as HTMLElement).closest('img[data-adj]') as HTMLImageElement | null
+  if (img) {
+    void viewAttachment(img.dataset.adj!)
+    return
+  }
   const a = (e.target as HTMLElement).closest('a.wl') as HTMLElement | null
   if (!a) return
   e.preventDefault()

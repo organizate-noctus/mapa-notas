@@ -31,7 +31,7 @@ export type Store = 'notes' | 'events'
 let dbp: Promise<IDBPDatabase> | null = null
 
 function db() {
-  dbp ??= openDB('mapa-notas', 3, {
+  dbp ??= openDB('mapa-notas', 4, {
     upgrade(d, oldVersion) {
       if (oldVersion < 1) {
         d.createObjectStore('notes', { keyPath: 'id' })
@@ -42,9 +42,37 @@ function db() {
         const v = d.createObjectStore('versions', { keyPath: 'id', autoIncrement: true })
         v.createIndex('noteId', 'noteId')
       }
+      if (oldVersion < 4) d.createObjectStore('files', { keyPath: 'id' })
     },
   })
   return dbp
+}
+
+export interface StoredFile {
+  id: string
+  blob: Blob
+  kind: 'photo' | 'draw'
+  uploaded: boolean
+  at: number
+}
+
+export async function putFile(f: StoredFile): Promise<void> {
+  await (await db()).put('files', f)
+}
+
+export async function getFile(id: string): Promise<StoredFile | undefined> {
+  return (await db()).get('files', id)
+}
+
+export async function pendingFiles(): Promise<StoredFile[]> {
+  const list: StoredFile[] = await (await db()).getAll('files')
+  return list.filter((f) => !f.uploaded)
+}
+
+export async function markUploaded(id: string): Promise<void> {
+  const d = await db()
+  const f: StoredFile | undefined = await d.get('files', id)
+  if (f) await d.put('files', { ...f, uploaded: true })
 }
 
 export interface Version {

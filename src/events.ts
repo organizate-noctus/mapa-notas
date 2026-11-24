@@ -58,6 +58,7 @@ const STOP = /^(el|la|los|las|para|de|del|a|en|dia|dÃ­a|este|esta|que|y|,|:|-|â€
 
 function normalize(line: string): string {
   return line
+    .replace(/!\[[^\]]*\]\(adj:[0-9a-f]{16}\)/g, ' ')
     .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, a: string, b?: string) => b ?? a)
     .replace(/\b(\d{1,2})-(\d{1,2})(?:-(\d{2,4}))?\b/g, (m, d: string, mo: string, y?: string) =>
       +d <= 31 && +mo <= 12 ? `${d}/${mo}${y ? '/' + y : ''}` : m,

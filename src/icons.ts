@@ -8,6 +8,9 @@ export const icons = {
   ),
   folder: svg('<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2V17.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>', 18),
   spark: svg('<path d="M12 4v4M12 16v4M4 12h4M16 12h4M7 7l2 2M15 15l2 2M17 7l-2 2M9 15l-2 2"/>', 18),
+  image: svg('<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5"/>', 18),
+  brush: svg('<path d="M4 20c2.5 0 4-1 4-3 0-1.5-1-2.5-2.2-2.5S3.5 15.6 4 20ZM8.5 15.5 18.8 5.2a2 2 0 0 1 2.8 2.8L11.3 18.3"/>', 18),
+  hub: svg('<circle cx="12" cy="12" r="2.4"/><circle cx="5" cy="6" r="1.6"/><circle cx="19" cy="7" r="1.6"/><circle cx="6" cy="19" r="1.6"/><circle cx="18.5" cy="18" r="1.6"/><path d="m6.3 7 4 3.6M17.6 8l-4 3M7.2 17.8l3.4-4M17.2 16.8l-3.6-3.4"/>', 18),
   sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>'),
   history: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>', 18),
   calendar: svg(

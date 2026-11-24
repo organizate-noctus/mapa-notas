@@ -8,7 +8,7 @@ function esc(s: string): string {
 
 export function titleOf(body: string): string {
   for (const line of body.split('\n')) {
-    const t = line.replace(/^#+\s*/, '').trim()
+    const t = line.replace(/!\[[^\]]*\]\(adj:[0-9a-f]{16}\)/g, '').replace(/^#+\s*/, '').trim()
     if (t) return t
   }
   return 'Sin título'
