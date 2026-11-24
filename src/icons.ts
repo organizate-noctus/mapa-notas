@@ -6,6 +6,7 @@ export const icons = {
   map: svg(
     '<circle cx="6" cy="17" r="2"/><circle cx="12" cy="6.5" r="2"/><circle cx="18.5" cy="14" r="2"/><path d="M7.2 15.2 10.8 8.3M13.7 7.9l3.6 4.4M8 17.2l8.5-2.5"/>',
   ),
+  folder: svg('<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2V17.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>', 18),
   calendar: svg(
     '<rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/>',
   ),

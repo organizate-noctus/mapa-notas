@@ -20,7 +20,20 @@ import {
   type EventState,
   type Note,
 } from './db'
-import { backlinks, findByTitle, nodeCounts, renderLinks, titleOf } from './links'
+import {
+  MAX_TIER,
+  backlinks,
+  deepestNodes,
+  findByTitle,
+  joinPath,
+  leafOf,
+  nodeTree,
+  pathKey,
+  pathParts,
+  renderLinks,
+  showPath,
+  titleOf,
+} from './links'
 import { currentEmail, signIn, signOut, signUp, supabase, sync } from './sync'
 import { hideMap, refreshMap, showMap } from './graph'
 import { defaultRemind, detectEvents, fmtWhen, remindOptions, type Proposal } from './events'
@@ -36,6 +49,7 @@ root.innerHTML = `
   <nav class="rail" id="rail" aria-label="Secciones">
     <span class="mark">${icons.mark}</span>
     <button class="tab on" id="tabnotes">${icons.notes}<span>Notas</span></button>
+    <button class="tab" id="foldbtn">${icons.folder}<span>Carpetas</span></button>
     <button class="tab" id="mapbtn">${icons.map}<span>Mapa</span></button>
     <button class="tab" id="calbtn">${icons.calendar}<span>Agenda</span></button>
     <span class="grow"></span>
@@ -66,6 +80,7 @@ root.innerHTML = `
         <button class="btn ghost small" id="nodebtn">${icons.plus}Nodo</button>
         <div id="nodepop" hidden>
           <div class="newnode">
+            <select id="nparent" aria-label="Dentro de"></select>
             <input id="nnew" placeholder="Nuevo nodo" autocomplete="off" />
             <button class="btn primary small" id="nadd">Crear</button>
           </div>
@@ -91,6 +106,10 @@ root.innerHTML = `
       <div id="graph"></div>
       <div class="maphud"><div class="card"><span><i class="nota"></i>Nota</span><span><i class="nodo"></i>Nodo</span><span id="mapinfo"></span></div></div>
       <div class="maphint">Arrastra para girar · rueda o pellizco para acercar · toca una nota para abrirla</div>
+    </div>
+    <div id="foldview" hidden>
+      <div class="pagehead"><h2>Carpetas</h2></div>
+      <div id="foldbody"></div>
     </div>
     <div id="calview" hidden>
       <div class="pagehead">
@@ -160,6 +179,9 @@ const edlg = $<HTMLDialogElement>('edlg')
 const mapEl = $('mapview')
 const graphEl = $('graph')
 const mapInfo = $('mapinfo')
+const foldEl = $('foldview')
+const foldBody = $('foldbody')
+const parentSel = $<HTMLSelectElement>('nparent')
 const calEl = $('calview')
 const calBody = $('calbody')
 const calNotif = $('calnotif')
@@ -167,9 +189,12 @@ const toastEl = $('toast')
 const docEl = $('doc')
 const pulseEl = $('pulse')
 const micBtn = $<HTMLButtonElement>('mic')
-const tabs: Record<string, HTMLElement> = { none: $('tabnotes'), map: $('mapbtn'), cal: $('calbtn') }
+const tabs: Record<string, HTMLElement> = { none: $('tabnotes'), folders: $('foldbtn'), map: $('mapbtn'), cal: $('calbtn') }
 
-type Panel = 'none' | 'map' | 'cal'
+type Panel = 'none' | 'map' | 'cal' | 'folders'
+
+const openFolders = new Set<string>()
+let foldersSeeded = false
 
 let panel: Panel = 'none'
 let notes: Note[] = []
@@ -248,7 +273,7 @@ function renderList(): void {
     if (n.nodes.length) {
       const nodes = document.createElement('span')
       nodes.className = 'n'
-      nodes.textContent = n.nodes.join(', ')
+      nodes.textContent = deepestNodes(n.nodes).map(showPath).join(', ')
       m.append(nodes)
     }
     const time = document.createElement('time')
@@ -291,7 +316,7 @@ function renderNodeBar(): void {
   for (const name of n.nodes) {
     const chip = document.createElement('span')
     chip.className = 'chip'
-    chip.textContent = name
+    chip.textContent = showPath(name)
     const x = document.createElement('button')
     x.innerHTML = icons.close
     x.title = 'Quitar'
@@ -305,8 +330,22 @@ function renderNodePop(): void {
   const n = current()
   nodeList.innerHTML = ''
   if (!n) return
-  const mine = new Set(n.nodes.map((x) => x.toLowerCase()))
-  const all = nodeCounts(notes)
+  const mine = new Set(n.nodes.map(pathKey))
+  const all = nodeTree(notes)
+  const prevParent = parentSel.value
+  parentSel.innerHTML = ''
+  const root = document.createElement('option')
+  root.value = ''
+  root.textContent = 'Tier 1 (raíz)'
+  parentSel.append(root)
+  for (const it of all) {
+    if (it.tier >= MAX_TIER) continue
+    const o = document.createElement('option')
+    o.value = it.path
+    o.textContent = `Tier ${it.tier + 1} en ${showPath(it.path)}`
+    parentSel.append(o)
+  }
+  parentSel.value = [...parentSel.options].some((o) => o.value === prevParent) ? prevParent : ''
   if (!all.length) {
     const none = document.createElement('div')
     none.className = 'none'
@@ -316,15 +355,19 @@ function renderNodePop(): void {
   for (const it of all) {
     const label = document.createElement('label')
     label.className = 'nrow'
+    label.style.paddingLeft = `${10 + (it.tier - 1) * 18}px`
     const cb = document.createElement('input')
     cb.type = 'checkbox'
-    cb.checked = mine.has(it.name.toLowerCase())
-    cb.onchange = () => toggleNode(it.name)
+    cb.checked = mine.has(it.key)
+    cb.onchange = () => toggleNode(it.path)
     const name = document.createElement('span')
-    name.textContent = it.name
+    name.textContent = leafOf(it.path)
+    const tier = document.createElement('em')
+    tier.className = `tier t${it.tier}`
+    tier.textContent = `T${it.tier}`
     const count = document.createElement('small')
     count.textContent = String(it.count)
-    label.append(cb, name, count)
+    label.append(cb, name, tier, count)
     nodeList.append(label)
   }
 }
@@ -332,9 +375,9 @@ function renderNodePop(): void {
 async function toggleNode(name: string): Promise<void> {
   const n = current()
   if (!n) return
-  const k = name.toLowerCase()
-  const has = n.nodes.some((x) => x.toLowerCase() === k)
-  const next = has ? n.nodes.filter((x) => x.toLowerCase() !== k) : [...n.nodes, name]
+  const k = pathKey(name)
+  const has = n.nodes.some((x) => pathKey(x) === k)
+  const next = has ? n.nodes.filter((x) => pathKey(x) !== k) : [...n.nodes, name]
   const saved = await setNodes(n.id, next)
   if (!saved) return
   const i = notes.findIndex((x) => x.id === saved.id)
@@ -347,13 +390,91 @@ async function toggleNode(name: string): Promise<void> {
 }
 
 async function createNode(): Promise<void> {
-  const name = nodeInput.value.trim()
+  const name = nodeInput.value.replace(/\//g, ' ').trim()
   if (!name) return
-  const existing = nodeCounts(notes).find((x) => x.name.toLowerCase() === name.toLowerCase())
+  const full = joinPath([...pathParts(parentSel.value), name])
+  const existing = nodeTree(notes).find((x) => x.key === pathKey(full))
   nodeInput.value = ''
   const n = current()
-  if (n && n.nodes.some((x) => x.toLowerCase() === name.toLowerCase())) return
-  await toggleNode(existing?.name ?? name)
+  if (n && n.nodes.some((x) => pathKey(x) === pathKey(full))) return
+  await toggleNode(existing?.path ?? full)
+}
+
+function folderBranch(path: string | null, tree: ReturnType<typeof nodeTree>): HTMLElement {
+  const wrap = document.createElement('div')
+  wrap.className = 'fold-children'
+  const depth = path ? pathParts(path).length : 0
+  const prefix = path ? `${pathKey(path)}/` : ''
+  const kids = tree.filter((x) => x.tier === depth + 1 && x.key.startsWith(prefix))
+  for (const k of kids) {
+    const det = document.createElement('details')
+    det.className = `folder t${k.tier}`
+    det.open = openFolders.has(k.key)
+    det.ontoggle = () => {
+      if (det.open) openFolders.add(k.key)
+      else openFolders.delete(k.key)
+    }
+    const sum = document.createElement('summary')
+    const name = document.createElement('span')
+    name.textContent = leafOf(k.path)
+    const tier = document.createElement('em')
+    tier.className = `tier t${k.tier}`
+    tier.textContent = `T${k.tier}`
+    const count = document.createElement('small')
+    count.textContent = String(k.count)
+    sum.append(icon('folder'), name, tier, count)
+    det.append(sum)
+    det.append(folderBranch(k.path, tree))
+    const own = notes.filter((nt) => deepestNodes(nt.nodes).some((p) => pathKey(p) === k.key))
+    for (const nt of own) det.lastElementChild!.append(folderNote(nt))
+    wrap.append(det)
+  }
+  return wrap
+}
+
+function icon(name: 'folder' | 'notes'): HTMLElement {
+  const s = document.createElement('span')
+  s.className = 'ficon'
+  s.innerHTML = icons[name]
+  return s
+}
+
+function folderNote(nt: Note): HTMLElement {
+  const a = document.createElement('button')
+  a.className = 'fnote'
+  a.textContent = titleOf(nt.body)
+  a.onclick = () => open(nt.id)
+  return a
+}
+
+function renderFolders(): void {
+  const tree = nodeTree(notes)
+  if (!foldersSeeded) {
+    foldersSeeded = true
+    for (const t of tree) if (t.tier === 1) openFolders.add(t.key)
+  }
+  foldBody.innerHTML = ''
+  if (!tree.length) {
+    const none = document.createElement('div')
+    none.className = 'none'
+    none.textContent = 'Aún no hay carpetas. Crea un nodo desde una nota y aparecerá aquí.'
+    foldBody.append(none)
+  } else {
+    const box = document.createElement('div')
+    box.className = 'foldwrap'
+    box.append(folderBranch(null, tree))
+    foldBody.append(box)
+  }
+  const loose = notes.filter((nt) => !nt.nodes.length)
+  if (loose.length) {
+    const h = document.createElement('h4')
+    h.className = 'loosehead'
+    h.textContent = `Sin clasificar · ${loose.length}`
+    const box = document.createElement('div')
+    box.className = 'foldwrap loose'
+    for (const nt of loose) box.append(folderNote(nt))
+    foldBody.append(h, box)
+  }
 }
 
 function renderProposals(): void {
@@ -433,6 +554,7 @@ function renderMain(): void {
   const inPanel = panel !== 'none'
   mapEl.hidden = panel !== 'map'
   calEl.hidden = panel !== 'cal'
+  foldEl.hidden = panel !== 'folders'
   barEl.hidden = inPanel || !n
   nodebarEl.hidden = inPanel || !n
   emptyEl.hidden = inPanel || !!n
@@ -464,7 +586,7 @@ function closePanel(): void {
   panel = 'none'
 }
 
-async function openPanel(p: 'map' | 'cal'): Promise<void> {
+async function openPanel(p: 'map' | 'cal' | 'folders'): Promise<void> {
   if (panel === p) {
     closePanel()
     renderList()
@@ -477,6 +599,10 @@ async function openPanel(p: 'map' | 'cal'): Promise<void> {
   renderMain()
   if (p === 'cal') {
     renderCal()
+    return
+  }
+  if (p === 'folders') {
+    renderFolders()
     return
   }
   mapInfo.textContent = 'Cargando…'
@@ -505,6 +631,7 @@ async function reload(): Promise<void> {
   renderList()
   renderMain()
   if (panel === 'map') mapInfo.textContent = refreshMap(notes)
+  if (panel === 'folders') renderFolders()
   await reloadEvents()
 }
 
@@ -554,6 +681,7 @@ $('new').onclick = async () => {
 
 $('mapbtn').onclick = () => openPanel('map')
 $('calbtn').onclick = () => openPanel('cal')
+$('foldbtn').onclick = () => openPanel('folders')
 
 type VoiceState = 'idle' | 'loading' | 'recording' | 'transcribing'
 

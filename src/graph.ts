@@ -12,10 +12,14 @@ type Obj = {
 }
 
 type N = GNode & { x?: number; y?: number; z?: number; __threeObj?: { userData: Obj } }
-type L = { source: N | string; target: N | string }
+type L = { source: N | string; target: N | string; tree?: boolean }
 
 const STAR = '#b9c4ff'
 const GOLD = '#f2b84b'
+const TIER_COLOR = ['', '#f2b84b', '#ffd27a', '#ffe9bf']
+const TIER_BASE = [0, 5.4, 3.8, 2.8]
+const TIER_HALO = [0, 0.72, 0.58, 0.46]
+const TIER_FONT = [0, 6.6, 5.2, 4.2]
 const TEXT = '#eceaf4'
 const FONT = 'Instrument Sans Variable, system-ui, sans-serif'
 
@@ -27,7 +31,12 @@ let hlNodes = new Set<string>()
 let hlLinks = new Set<object>()
 let idleTimer: number | undefined
 
-const radius = (n: GNode): number => (n.kind === 'tag' ? 5 : 3.4) * Math.cbrt(1 + n.degree)
+const radius = (n: GNode): number => (n.kind === 'tag' ? TIER_BASE[n.tier] ?? 4 : 3) * Math.cbrt(1 + n.degree)
+
+const idOf = (e: N | string): string => (typeof e === 'object' ? e.id : e)
+
+const quietLink = (l: L): string => (l.tree ? 'rgba(242,184,75,0.5)' : 'rgba(150,160,255,0.5)')
+const dimLink = (l: L): string => (l.tree ? 'rgba(242,184,75,0.1)' : 'rgba(150,160,255,0.08)')
 
 function glowTexture(THREE: ThreeLib) {
   const c = document.createElement('canvas')
@@ -92,6 +101,47 @@ function starfield(THREE: ThreeLib) {
   )
 }
 
+function fit(ms: number): void {
+  if (!graph || !host) return
+  const nodes = (graph.graphData().nodes as N[]).filter((n) => Number.isFinite(n.x))
+  if (!nodes.length) return
+  let cx = 0
+  let cy = 0
+  let cz = 0
+  for (const n of nodes) {
+    cx += n.x ?? 0
+    cy += n.y ?? 0
+    cz += n.z ?? 0
+  }
+  cx /= nodes.length
+  cy /= nodes.length
+  cz /= nodes.length
+  let reach = 20
+  for (const n of nodes) {
+    const d = Math.hypot((n.x ?? 0) - cx, (n.y ?? 0) - cy, (n.z ?? 0) - cz) + radius(n) * 2.2
+    if (d > reach) reach = d
+  }
+  const cam = graph.camera() as unknown as { fov: number; position: { x: number; y: number; z: number } }
+  const aspect = Math.max(0.3, host.clientWidth / Math.max(1, host.clientHeight))
+  const vHalf = (cam.fov * Math.PI) / 360
+  const half = Math.min(vHalf, Math.atan(Math.tan(vHalf) * aspect))
+  const dist = (reach / Math.sin(half)) * 1.0
+  let dx = cam.position.x - cx
+  let dy = cam.position.y - cy
+  let dz = cam.position.z - cz
+  const len = Math.hypot(dx, dy, dz)
+  if (len < 1e-3) {
+    dx = 0
+    dy = 0
+    dz = 1
+  } else {
+    dx /= len
+    dy /= len
+    dz /= len
+  }
+  graph.cameraPosition({ x: cx + dx * dist, y: cy + dy * dist, z: cz + dz * dist }, { x: cx, y: cy, z: cz }, ms)
+}
+
 function applyHighlight(): void {
   if (!graph) return
   for (const n of graph.graphData().nodes as N[]) {
@@ -103,10 +153,8 @@ function applyHighlight(): void {
     u.core.material.opacity = on ? 1 : 0.28
   }
   graph
-    .linkColor((l) =>
-      hlLinks.has(l) ? 'rgba(242,184,75,0.95)' : active ? 'rgba(150,160,255,0.08)' : 'rgba(150,160,255,0.5)',
-    )
-    .linkWidth((l) => (hlLinks.has(l) ? 1 : 0.55))
+    .linkColor((l) => (hlLinks.has(l) ? 'rgba(242,184,75,0.95)' : active ? dimLink(l as L) : quietLink(l as L)))
+    .linkWidth((l) => (hlLinks.has(l) ? 1 : (l as L).tree ? 0.9 : 0.55))
     .linkDirectionalParticles((l) => (hlLinks.has(l) ? 3 : 0))
 }
 
@@ -118,8 +166,8 @@ function hover(n: N | null): void {
   if (n) {
     hlNodes.add(n.id)
     for (const l of graph.graphData().links as L[]) {
-      const s = typeof l.source === 'object' ? l.source.id : l.source
-      const t = typeof l.target === 'object' ? l.target.id : l.target
+      const s = idOf(l.source)
+      const t = idOf(l.target)
       if (s === n.id || t === n.id) {
         hlNodes.add(s)
         hlNodes.add(t)
@@ -156,14 +204,14 @@ export async function showMap(
       .nodeThreeObjectExtend(false)
       .nodeThreeObject((n) => {
         const g = n as N
-        const color = g.kind === 'tag' ? GOLD : STAR
+        const color = g.kind === 'tag' ? TIER_COLOR[g.tier] ?? GOLD : STAR
         const r = radius(g)
         const group = new THREE.Group()
         const core = new THREE.Mesh(
           new THREE.SphereGeometry(r, 32, 24),
           new THREE.MeshBasicMaterial({ color, transparent: true }),
         )
-        const base = g.kind === 'tag' ? 0.7 : 0.5
+        const base = g.kind === 'tag' ? TIER_HALO[g.tier] ?? 0.6 : 0.5
         const halo = new THREE.Sprite(
           new THREE.SpriteMaterial({
             map: glow,
@@ -175,23 +223,24 @@ export async function showMap(
           }),
         )
         halo.scale.setScalar(r * 4.6)
-        const label = new SpriteText(g.label, g.kind === 'tag' ? 5.2 : 4.4, TEXT)
+        const label = new SpriteText(g.label, g.kind === 'tag' ? TIER_FONT[g.tier] ?? 5 : 4.2, TEXT)
         label.fontFace = FONT
         label.fontSize = 150
-        label.fontWeight = g.kind === 'tag' ? '600' : '400'
+        label.fontWeight = g.kind === 'tag' ? (g.tier === 1 ? '700' : '600') : '400'
         label.position.y = -(r + 6)
         label.material.depthWrite = false
         group.add(halo, core, label)
         group.userData = { halo, label, core, base }
         return group
       })
-      .linkColor(() => 'rgba(150,160,255,0.5)')
-      .linkWidth(0.55)
+      .linkColor((l) => quietLink(l as L))
+      .linkWidth((l) => ((l as L).tree ? 0.9 : 0.55))
       .linkResolution(10)
       .linkCurvature(0.08)
       .linkDirectionalParticleWidth(1.5)
       .linkDirectionalParticleSpeed(0.012)
       .linkDirectionalParticleColor(() => GOLD)
+      .warmupTicks(140)
       .cooldownTime(3500)
       .onNodeHover((n) => hover(n as N | null))
       .onNodeClick((n) => {
@@ -210,8 +259,16 @@ export async function showMap(
       .onEngineStop(() => {
         if (fitted) return
         fitted = true
-        graph!.zoomToFit(600, 50)
+        fit(700)
       })
+
+    const linkForce = graph.d3Force('link') as unknown as { distance: (f: (l: L) => number) => void } | undefined
+    linkForce?.distance((l) => (l.tree ? 60 : 42))
+    const charge = graph.d3Force('charge') as unknown as
+      | { strength: (v: number) => void; distanceMax: (v: number) => void }
+      | undefined
+    charge?.strength(-90)
+    charge?.distanceMax(120)
 
     const strong = (navigator.hardwareConcurrency ?? 4) >= 6
     const dpr = Math.min(window.devicePixelRatio || 1, strong ? 3 : 2)
@@ -224,7 +281,7 @@ export async function showMap(
     if (strong) {
       composer.renderTarget1.samples = 4
       composer.renderTarget2.samples = 4
-      composer.addPass(new UnrealBloomPass(new THREE.Vector2(el.clientWidth, el.clientHeight), 0.45, 0.5, 0.82))
+      composer.addPass(new UnrealBloomPass(new THREE.Vector2(el.clientWidth, el.clientHeight), 0.45, 0.5, 0.95))
       composer.addPass(new OutputPass())
     }
 
@@ -275,7 +332,7 @@ export function refreshMap(notes: Note[]): string {
   hlNodes = new Set()
   hlLinks = new Set()
   graph.graphData(data)
-  if (!fitted) window.setTimeout(() => graph?.zoomToFit(900, 50), 1400)
+  if (!fitted) window.setTimeout(() => fit(900), 1400)
   const tags = data.nodes.filter((n) => n.kind === 'tag').length
   const n = data.nodes.length - tags
   return `${n} ${n === 1 ? 'nota' : 'notas'} · ${tags} ${tags === 1 ? 'nodo' : 'nodos'} · ${data.links.length} ${data.links.length === 1 ? 'enlace' : 'enlaces'}`
