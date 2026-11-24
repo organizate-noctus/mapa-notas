@@ -45,6 +45,14 @@
 
 html, body, #app { height: 100%; margin: 0; }
 
+html, body {
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   background: var(--fondo);
   color: var(--texto);
@@ -102,7 +110,8 @@ input[type="search"], input[type="text"], input[type="email"], input[type="passw
 input:focus, select:focus { border-color: var(--oro); outline: none; }
 input::placeholder, textarea::placeholder { color: var(--tenue); }
 
-.app { display: grid; grid-template-columns: 72px 320px minmax(0, 1fr); height: 100dvh; }
+.app { position: fixed; inset: 0; display: grid; grid-template-columns: 72px 320px minmax(0, 1fr); overflow: hidden; }
+.app > * { min-width: 0; min-height: 0; }
 
 .rail {
   display: flex;

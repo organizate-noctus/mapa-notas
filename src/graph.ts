@@ -31,16 +31,38 @@ const radius = (n: GNode): number => (n.kind === 'tag' ? 5 : 3.4) * Math.cbrt(1 
 
 function glowTexture(THREE: ThreeLib) {
   const c = document.createElement('canvas')
-  c.width = c.height = 128
+  c.width = c.height = 256
   const g = c.getContext('2d')!
-  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64)
+  const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128)
   grad.addColorStop(0, 'rgba(255,255,255,1)')
   grad.addColorStop(0.18, 'rgba(255,255,255,0.55)')
   grad.addColorStop(0.5, 'rgba(255,255,255,0.12)')
   grad.addColorStop(1, 'rgba(255,255,255,0)')
   g.fillStyle = grad
-  g.fillRect(0, 0, 128, 128)
+  g.fillRect(0, 0, 256, 256)
   return new THREE.CanvasTexture(c)
+}
+
+function nebula(THREE: ThreeLib) {
+  const c = document.createElement('canvas')
+  c.width = 1024
+  c.height = 1024
+  const g = c.getContext('2d')!
+  g.fillStyle = '#070917'
+  g.fillRect(0, 0, 1024, 1024)
+  const blob = (x: number, y: number, r: number, color: string) => {
+    const grad = g.createRadialGradient(x, y, 0, x, y, r)
+    grad.addColorStop(0, color)
+    grad.addColorStop(1, 'rgba(7,9,23,0)')
+    g.fillStyle = grad
+    g.fillRect(0, 0, 1024, 1024)
+  }
+  blob(760, 200, 620, 'rgba(36,44,110,0.85)')
+  blob(160, 900, 560, 'rgba(62,36,98,0.7)')
+  blob(520, 520, 700, 'rgba(18,22,58,0.55)')
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  return t
 }
 
 function starfield(THREE: ThreeLib) {
@@ -116,11 +138,14 @@ export async function showMap(
 ): Promise<string> {
   host = el
   if (!graph) {
-    const [{ default: ForceGraph3D }, { default: SpriteText }, THREE] = await Promise.all([
-      import('3d-force-graph'),
-      import('three-spritetext'),
-      import('three'),
-    ])
+    const [{ default: ForceGraph3D }, { default: SpriteText }, THREE, { UnrealBloomPass }, { OutputPass }] =
+      await Promise.all([
+        import('3d-force-graph'),
+        import('three-spritetext'),
+        import('three'),
+        import('three/examples/jsm/postprocessing/UnrealBloomPass.js'),
+        import('three/examples/jsm/postprocessing/OutputPass.js'),
+      ])
     const glow = glowTexture(THREE)
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -135,10 +160,10 @@ export async function showMap(
         const r = radius(g)
         const group = new THREE.Group()
         const core = new THREE.Mesh(
-          new THREE.SphereGeometry(r, 20, 20),
+          new THREE.SphereGeometry(r, 32, 24),
           new THREE.MeshBasicMaterial({ color, transparent: true }),
         )
-        const base = g.kind === 'tag' ? 0.8 : 0.55
+        const base = g.kind === 'tag' ? 0.7 : 0.5
         const halo = new THREE.Sprite(
           new THREE.SpriteMaterial({
             map: glow,
@@ -149,9 +174,10 @@ export async function showMap(
             blending: THREE.AdditiveBlending,
           }),
         )
-        halo.scale.setScalar(r * 7)
+        halo.scale.setScalar(r * 4.6)
         const label = new SpriteText(g.label, g.kind === 'tag' ? 5.2 : 4.4, TEXT)
         label.fontFace = FONT
+        label.fontSize = 150
         label.fontWeight = g.kind === 'tag' ? '600' : '400'
         label.position.y = -(r + 6)
         label.material.depthWrite = false
@@ -161,6 +187,8 @@ export async function showMap(
       })
       .linkColor(() => 'rgba(150,160,255,0.5)')
       .linkWidth(0.55)
+      .linkResolution(10)
+      .linkCurvature(0.08)
       .linkDirectionalParticleWidth(1.5)
       .linkDirectionalParticleSpeed(0.012)
       .linkDirectionalParticleColor(() => GOLD)
@@ -185,7 +213,20 @@ export async function showMap(
         graph!.zoomToFit(600, 50)
       })
 
+    const strong = (navigator.hardwareConcurrency ?? 4) >= 6
+    const dpr = Math.min(window.devicePixelRatio || 1, strong ? 3 : 2)
+    graph.renderer().setPixelRatio(dpr)
+    graph.scene().background = nebula(THREE)
     graph.scene().add(starfield(THREE))
+
+    const composer = graph.postProcessingComposer()
+    composer.setPixelRatio(dpr)
+    if (strong) {
+      composer.renderTarget1.samples = 4
+      composer.renderTarget2.samples = 4
+      composer.addPass(new UnrealBloomPass(new THREE.Vector2(el.clientWidth, el.clientHeight), 0.45, 0.5, 0.82))
+      composer.addPass(new OutputPass())
+    }
 
     const c = graph.controls() as unknown as {
       autoRotate: boolean
