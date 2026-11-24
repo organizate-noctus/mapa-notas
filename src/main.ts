@@ -7,7 +7,8 @@ import { registerSW } from 'virtual:pwa-register'
 import { icons } from './icons'
 import { exportJson, exportMarkdown, importBackup } from './backup'
 import { pendingTasks, taskLines, toggleLine } from './tasks'
-import { suggestNodes, suggestTitle } from './suggest'
+import { norm, suggestNodes, suggestTitle } from './suggest'
+import { initPalette, type PaletteItem } from './palette'
 import {
   addEvent,
   addVersion,
@@ -40,7 +41,7 @@ import {
   titleOf,
 } from './links'
 import { currentEmail, signIn, signOut, signUp, supabase, sync } from './sync'
-import { hideMap, refreshMap, showMap } from './graph'
+import { flyToNode, getTierMax, hideMap, refreshMap, setTierMax, showMap } from './graph'
 import { defaultRemind, detectEvents, fmtWhen, remindOptions, type Proposal } from './events'
 import { renderCalendar, type CalHandlers } from './calendar'
 import { renderToday } from './today'
@@ -67,7 +68,7 @@ root.innerHTML = `
       <h1>Notas</h1>
       <button class="btn primary small" id="new">${icons.plus}Nueva</button>
     </header>
-    <div class="search">${icons.search}<input id="q" type="search" placeholder="Buscar notas" autocomplete="off" /></div>
+    <div class="search">${icons.search}<input id="q" type="search" placeholder="Buscar notas (Ctrl+K)" autocomplete="off" /></div>
     <ul id="list"></ul>
     <div class="side-foot">
       <span id="status"></span>
@@ -112,7 +113,15 @@ root.innerHTML = `
     </div>
     <div id="mapview" hidden>
       <div id="graph"></div>
-      <div class="maphud"><div class="card"><span><i class="nota"></i>Nota</span><span><i class="nodo"></i>Nodo</span><span id="mapinfo"></span></div></div>
+      <div class="maphud"><div class="card"><span><i class="nota"></i>Nota</span><span><i class="nodo"></i>Nodo</span><span id="mapinfo"></span></div>
+        <div class="card mapctl">
+          <input id="mapq" type="search" placeholder="Buscar nodo…" autocomplete="off" aria-label="Buscar en el mapa" />
+          <span class="seg" id="tierseg">
+            <button type="button" data-t="1">Nivel 1</button>
+            <button type="button" data-t="2">1–2</button>
+            <button type="button" data-t="3" class="on">Todo</button>
+          </span>
+        </div></div>
       <div class="maphint">Arrastra para girar · rueda o pellizco para acercar · toca una nota para abrirla</div>
     </div>
     <div id="todayview" hidden>
@@ -155,6 +164,12 @@ root.innerHTML = `
       <input type="file" id="bfile" accept="application/json,.json" hidden />
       <div id="bmsg"></div>
     </form>
+  </dialog>
+  <dialog id="pdlg">
+    <div id="pbox">
+      <input id="pq" type="search" placeholder="Buscar nota o ir a…" autocomplete="off" aria-label="Buscar" />
+      <div id="pres"></div>
+    </div>
   </dialog>
   <dialog id="hdlg">
     <form method="dialog">
@@ -870,6 +885,68 @@ async function newNote(): Promise<void> {
 
 $('new').onclick = newNote
 
+function syncTierSeg(): void {
+  const cur = getTierMax()
+  for (const b of $('tierseg').querySelectorAll('button')) b.classList.toggle('on', Number(b.dataset.t) === cur)
+}
+
+$('tierseg').onclick = (e) => {
+  const b = (e.target as HTMLElement).closest('button')
+  if (!b) return
+  setTierMax(Number(b.dataset.t))
+  syncTierSeg()
+}
+
+$<HTMLInputElement>('mapq').onkeydown = (e) => {
+  if (e.key !== 'Enter') return
+  const input = e.target as HTMLInputElement
+  const found = flyToNode(input.value)
+  if (found) input.blur()
+  else toast('No encontrado', `No hay ningún nodo ni nota que contenga «${input.value.trim()}»`)
+  syncTierSeg()
+}
+
+function paletteItems(query: string): PaletteItem[] {
+  const k = norm(query.trim())
+  const go = (label: string, run: () => void): PaletteItem => ({ label, hint: 'Ir a', run })
+  const cmds: PaletteItem[] = [
+    { label: 'Nueva nota', hint: 'Acción', run: () => void newNote() },
+    go('Hoy', () => void openPanel('today')),
+    go('Carpetas', () => void openPanel('folders')),
+    go('Mapa', () => void openPanel('map')),
+    go('Agenda', () => void openPanel('cal')),
+  ]
+  const asItem = (n: Note): PaletteItem => ({
+    label: titleOf(n.body),
+    hint: n.nodes.length ? deepestNodes(n.nodes).map(showPath).join(', ') : rel(n.updatedAt),
+    run: () => open(n.id),
+  })
+  if (!k) return [...cmds, ...notes.slice(0, 5).map(asItem)]
+  const scored: [number, PaletteItem][] = []
+  for (const n of notes) {
+    const t = norm(titleOf(n.body))
+    const nodes = norm(n.nodes.join(' '))
+    let s = 0
+    if (t.startsWith(k)) s = 4
+    else if (t.includes(k)) s = 3
+    else if (nodes.includes(k)) s = 2
+    else if (norm(n.body).includes(k)) s = 1
+    if (s) scored.push([s, asItem(n)])
+  }
+  scored.sort((a, b) => b[0] - a[0])
+  const hits = cmds.filter((c) => norm(c.label).includes(k))
+  return [...hits, ...scored.map((x) => x[1])]
+}
+
+const togglePalette = initPalette(paletteItems)
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault()
+    togglePalette()
+  }
+})
+
 $('mapbtn').onclick = () => openPanel('map')
 $('calbtn').onclick = () => openPanel('cal')
 $('foldbtn').onclick = () => openPanel('folders')
@@ -1287,8 +1364,21 @@ startReminders(() => events, toast)
 void resyncPush()
 runSync()
 
-const accion = new URLSearchParams(location.search).get('accion')
-if (accion === 'nueva' || accion === 'dictar') {
+const query = new URLSearchParams(location.search)
+const accion = query.get('accion')
+const shared = ['title', 'text', 'url']
+  .map((k) => (query.get(k) ?? '').trim())
+  .filter(Boolean)
+  .filter((v, i, a) => a.indexOf(v) === i)
+if (shared.length) {
+  history.replaceState(null, '', location.pathname)
+  const [first, ...rest] = shared
+  const note = await createNote(`# ${first.split('\n')[0].slice(0, 80)}\n\n${[...rest, ...(first.includes('\n') ? [first] : [])].join('\n\n')}`.trimEnd() + '\n')
+  notes = await allNotes()
+  open(note.id, true)
+  queueSync(500)
+  toast('Guardado en Mapa de notas', 'La nota compartida ya está creada')
+} else if (accion === 'nueva' || accion === 'dictar') {
   history.replaceState(null, '', location.pathname)
   await newNote()
   if (accion === 'dictar') micBtn.click()

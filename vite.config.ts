@@ -21,6 +21,11 @@ export default defineConfig({
         orientation: 'any',
         background_color: '#0e1020',
         theme_color: '#0e1020',
+        share_target: {
+          action: './',
+          method: 'GET',
+          params: { title: 'title', text: 'text', url: 'url' },
+        },
         shortcuts: [
           {
             name: 'Nueva nota',

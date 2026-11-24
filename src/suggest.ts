@@ -1,7 +1,7 @@
 import type { Note } from './db'
 import { leafOf, nodeTree, pathKey } from './links'
 
-const norm = (s: string): string => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+export const norm = (s: string): string => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 
 export function suggestTitle(body: string): string | null {
   const first = body.split('\n').find((l) => l.trim())

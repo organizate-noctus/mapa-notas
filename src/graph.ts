@@ -101,9 +101,61 @@ function starfield(THREE: ThreeLib) {
   )
 }
 
+let tierMax = 3
+let byId = new Map<string, N>()
+let noteTags = new Map<string, string[]>()
+
+function visibleId(id: string): boolean {
+  const n = byId.get(id)
+  if (!n) return true
+  if (n.kind === 'tag') return n.tier <= tierMax
+  const tags = noteTags.get(id)
+  return !tags?.length || tags.some((t) => visibleId(t))
+}
+
+function applyVisibility(): void {
+  if (!graph) return
+  graph
+    .nodeVisibility((n) => visibleId((n as N).id))
+    .linkVisibility((l) => visibleId(idOf((l as L).source)) && visibleId(idOf((l as L).target)))
+}
+
+export const getTierMax = (): number => tierMax
+
+export function setTierMax(max: number): void {
+  tierMax = max
+  applyVisibility()
+  window.setTimeout(() => fit(600), 80)
+}
+
+export function flyToNode(query: string): string | null {
+  if (!graph) return null
+  const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  const q = norm(query.trim())
+  if (!q) return null
+  const nodes = graph.graphData().nodes as N[]
+  const hit =
+    nodes.find((n) => n.kind === 'tag' && norm(n.label) === q) ??
+    nodes.find((n) => n.kind === 'tag' && norm(n.label).includes(q)) ??
+    nodes.find((n) => norm(n.label).includes(q))
+  if (!hit || !Number.isFinite(hit.x)) return null
+  if (!visibleId(hit.id)) {
+    tierMax = 3
+    applyVisibility()
+  }
+  const x = hit.x ?? 0
+  const y = hit.y ?? 0
+  const z = hit.z ?? 0
+  const k = 1 + 90 / Math.max(1, Math.hypot(x, y, z))
+  graph.cameraPosition({ x: x * k, y: y * k, z: z * k }, { x, y, z }, 900)
+  hover(hit)
+  window.setTimeout(() => hover(null), 2600)
+  return hit.label
+}
+
 function fit(ms: number): void {
   if (!graph || !host) return
-  const nodes = (graph.graphData().nodes as N[]).filter((n) => Number.isFinite(n.x))
+  const nodes = (graph.graphData().nodes as N[]).filter((n) => Number.isFinite(n.x) && visibleId(n.id))
   if (!nodes.length) return
   let cx = 0
   let cy = 0
@@ -331,7 +383,17 @@ export function refreshMap(notes: Note[]): string {
   active = false
   hlNodes = new Set()
   hlLinks = new Set()
+  byId = new Map((data.nodes as N[]).map((n) => [n.id, n]))
+  noteTags = new Map()
+  for (const l of data.links) {
+    const a = byId.get(l.source)
+    const b = byId.get(l.target)
+    if (!a || !b || a.kind === b.kind) continue
+    const [note, tag] = a.kind === 'note' ? [a, b] : [b, a]
+    noteTags.set(note.id, [...(noteTags.get(note.id) ?? []), tag.id])
+  }
   graph.graphData(data)
+  applyVisibility()
   if (!fitted) window.setTimeout(() => fit(900), 1400)
   const tags = data.nodes.filter((n) => n.kind === 'tag').length
   const n = data.nodes.length - tags
