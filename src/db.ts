@@ -29,16 +29,52 @@ export type Store = 'notes' | 'events'
 let dbp: Promise<IDBPDatabase> | null = null
 
 function db() {
-  dbp ??= openDB('mapa-notas', 2, {
+  dbp ??= openDB('mapa-notas', 3, {
     upgrade(d, oldVersion) {
       if (oldVersion < 1) {
         d.createObjectStore('notes', { keyPath: 'id' })
         d.createObjectStore('meta')
       }
       if (oldVersion < 2) d.createObjectStore('events', { keyPath: 'id' })
+      if (oldVersion < 3) {
+        const v = d.createObjectStore('versions', { keyPath: 'id', autoIncrement: true })
+        v.createIndex('noteId', 'noteId')
+      }
     },
   })
   return dbp
+}
+
+export interface Version {
+  id?: number
+  noteId: string
+  at: number
+  body: string
+  nodes: string[]
+  why: string
+}
+
+const KEEP_VERSIONS = 40
+const VERSION_GAP = 3 * 60 * 1000
+
+export async function versionsOf(noteId: string): Promise<Version[]> {
+  const list: Version[] = await (await db()).getAllFromIndex('versions', 'noteId', noteId)
+  return list.sort((a, b) => b.at - a.at)
+}
+
+export async function addVersion(
+  n: { id: string; body: string; nodes?: string[] },
+  why: string,
+  force = false,
+): Promise<void> {
+  if (!n.body.trim()) return
+  const list = await versionsOf(n.id)
+  const last = list[0]
+  if (last && last.body === n.body) return
+  if (!force && last && Date.now() - last.at < VERSION_GAP) return
+  const d = await db()
+  await d.add('versions', { noteId: n.id, at: Date.now(), body: n.body, nodes: n.nodes ?? [], why })
+  for (const old of list.slice(KEEP_VERSIONS - 1)) await d.delete('versions', old.id!)
 }
 
 export async function getRaw<T extends Syncable>(store: Store, id: string): Promise<T | undefined> {
@@ -84,6 +120,7 @@ export async function createNote(body = '', nodes: string[] = []): Promise<Note>
 export async function saveBody(id: string, body: string): Promise<Note | undefined> {
   const n = await getNote(id)
   if (!n) return
+  if (n.body !== body) await addVersion(n, 'edición')
   const next = { ...n, body, updatedAt: Date.now(), dirty: true }
   await putRaw('notes', next)
   return next
@@ -100,6 +137,7 @@ export async function setNodes(id: string, nodes: string[]): Promise<Note | unde
 export async function removeNote(id: string): Promise<void> {
   const n = await getNote(id)
   if (!n) return
+  await addVersion(n, 'borrada', true)
   await putRaw('notes', { ...n, deleted: true, updatedAt: Date.now(), dirty: true })
 }
 

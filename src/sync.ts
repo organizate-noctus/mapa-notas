@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import {
+  addVersion,
   dirtyOf,
   getMeta,
   getRaw,
@@ -121,6 +122,11 @@ async function syncTable<T extends Syncable>(spec: Spec<T>, uid: string): Promis
     max = Math.max(max, remote.updatedAt)
     const local = await getRaw<T>(spec.store, remote.id)
     if (local?.dirty && local.updatedAt > remote.updatedAt) continue
+    if (spec.store === 'notes' && local) {
+      const l = local as unknown as Note
+      const r = remote as unknown as Note
+      if (!l.deleted && l.body !== r.body) await addVersion(l, 'antes de sincronizar', true)
+    }
     await putRaw(spec.store, remote)
   }
 

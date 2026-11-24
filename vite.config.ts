@@ -21,6 +21,20 @@ export default defineConfig({
         orientation: 'any',
         background_color: '#0e1020',
         theme_color: '#0e1020',
+        shortcuts: [
+          {
+            name: 'Nueva nota',
+            short_name: 'Nueva',
+            url: './?accion=nueva',
+            icons: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }],
+          },
+          {
+            name: 'Dictar nota',
+            short_name: 'Dictar',
+            url: './?accion=dictar',
+            icons: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }],
+          },
+        ],
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },

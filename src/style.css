@@ -286,6 +286,29 @@ input::placeholder, textarea::placeholder { color: var(--tenue); }
 .tier.t2 { opacity: 0.8; }
 .tier.t3 { opacity: 0.6; }
 
+dialog hr { width: 100%; border: 0; border-top: 1px solid var(--linea); margin: 4px 0; }
+dialog strong.sub { font-size: 16px; }
+#bmsg { color: var(--tenue); font-size: 13.5px; min-height: 1em; }
+#hlist { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; max-height: 52vh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--linea) transparent; }
+#hlist .none { color: var(--tenue); font-size: 14px; padding: 8px 0; }
+.vrow { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--linea); border-radius: 14px; background: var(--superficie-2); }
+.vrow > div { flex: 1; min-width: 0; }
+.vrow b { font-weight: 600; font-size: 14px; margin-right: 8px; }
+.vrow small { color: var(--tenue); font-size: 12.5px; }
+.vrow p { margin: 4px 0 0; color: var(--tenue); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vrow .btn { flex: none; }
+
+.pendwrap { max-width: 1040px; margin: 36px auto 0; }
+.pendwrap h4 { margin: 0 0 10px; font: 600 18px/1.2 var(--display); letter-spacing: -0.01em; }
+.pendwrap .none { color: var(--tenue); font-size: 14px; padding: 6px 0; }
+.pend { margin-bottom: 12px; padding: 12px 14px; background: var(--superficie); border: 1px solid var(--linea); border-radius: 14px; }
+.pend > a { display: block; margin-bottom: 6px; color: var(--enlace); font-weight: 600; cursor: pointer; }
+.task { display: flex; align-items: flex-start; gap: 12px; padding: 7px 0; cursor: pointer; }
+.task span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+input[type="checkbox"]:not(.nrow input) { accent-color: var(--oro); width: 18px; height: 18px; margin: 2px 0 0; cursor: pointer; flex: none; }
+#pv li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.3em; }
+#pv li:has(> input[type="checkbox"]:checked) { color: var(--tenue); text-decoration: line-through; }
+
 #foldview { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #foldbody { flex: 1; overflow-y: auto; padding: 8px 24px 96px; scrollbar-width: thin; scrollbar-color: var(--linea) transparent; }
 #foldbody .none { color: var(--tenue); padding: 12px 0; max-width: 44ch; }

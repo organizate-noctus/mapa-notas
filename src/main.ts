@@ -5,8 +5,12 @@ import '@fontsource-variable/instrument-sans'
 import './style.css'
 import { registerSW } from 'virtual:pwa-register'
 import { icons } from './icons'
+import { exportJson, exportMarkdown, importBackup } from './backup'
+import { pendingTasks, taskLines, toggleLine } from './tasks'
 import {
   addEvent,
+  addVersion,
+  versionsOf,
   allEvents,
   allNotes,
   createNote,
@@ -72,6 +76,7 @@ root.innerHTML = `
       <button class="btn small" id="mode"></button>
       <button class="btn small" id="mic"></button>
       <span class="sp"></span>
+      <button class="btn ghost icon" id="hist" title="Historial de versiones">${icons.history}</button>
       <button class="btn ghost icon danger" id="del" title="Borrar nota">${icons.trash}</button>
     </div>
     <div class="nodebar" id="nodebar" hidden>
@@ -134,6 +139,22 @@ root.innerHTML = `
         <button type="button" class="btn" id="dlogout">Cerrar sesión</button>
         <button type="button" class="btn ghost" id="dclose">Cerrar</button>
       </div>
+      <hr />
+      <strong class="sub">Copia de seguridad</strong>
+      <div class="row">
+        <button type="button" class="btn" id="bjson">Exportar copia</button>
+        <button type="button" class="btn" id="bmd">Exportar texto</button>
+      </div>
+      <button type="button" class="btn" id="bimp">Importar copia</button>
+      <input type="file" id="bfile" accept="application/json,.json" hidden />
+      <div id="bmsg"></div>
+    </form>
+  </dialog>
+  <dialog id="hdlg">
+    <form method="dialog">
+      <strong>Historial de versiones</strong>
+      <div id="hlist"></div>
+      <div class="row"><button type="button" class="btn ghost" id="hclose">Cerrar</button></div>
     </form>
   </dialog>
   <dialog id="edlg">
@@ -307,6 +328,64 @@ function renderPreview(): void {
   if (!n) return
   const html = marked.parse(renderLinks(n.body), { async: false }) as string
   pvEl.innerHTML = DOMPurify.sanitize(html)
+  const boxes = [...pvEl.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+  const tasks = taskLines(n.body)
+  if (boxes.length === tasks.length) {
+    boxes.forEach((b, i) => {
+      b.disabled = false
+      b.dataset.line = String(tasks[i].line)
+    })
+  }
+}
+
+async function toggleTask(noteId: string, line: number): Promise<void> {
+  const n = notes.find((x) => x.id === noteId)
+  if (!n) return
+  const saved = await saveBody(n.id, toggleLine(n.body, line))
+  if (!saved) return
+  const i = notes.findIndex((x) => x.id === saved.id)
+  notes[i] = saved
+  notes.sort((a, b) => b.updatedAt - a.updatedAt)
+  renderList()
+  if (panel === 'cal') renderCal()
+  else if (reading) renderPreview()
+  queueSync()
+}
+
+function renderPending(): void {
+  const list = pendingTasks(notes)
+  const wrap = document.createElement('section')
+  wrap.className = 'pendwrap'
+  const h = document.createElement('h4')
+  h.textContent = 'Pendientes'
+  wrap.append(h)
+  if (!list.length) {
+    const none = document.createElement('div')
+    none.className = 'none'
+    none.textContent = 'Nada pendiente. Escribe «- [ ] tarea» en una nota y aparecerá aquí.'
+    wrap.append(none)
+  }
+  for (const { note, tasks } of list) {
+    const box = document.createElement('div')
+    box.className = 'pend'
+    const t = document.createElement('a')
+    t.textContent = titleOf(note.body)
+    t.onclick = () => open(note.id)
+    box.append(t)
+    for (const task of tasks) {
+      const label = document.createElement('label')
+      label.className = 'task'
+      const cb = document.createElement('input')
+      cb.type = 'checkbox'
+      cb.onchange = () => toggleTask(note.id, task.line)
+      const span = document.createElement('span')
+      span.textContent = task.text
+      label.append(cb, span)
+      box.append(label)
+    }
+    wrap.append(box)
+  }
+  calBody.append(wrap)
 }
 
 function renderNodeBar(): void {
@@ -547,6 +626,7 @@ function renderCal(): void {
       queueSync(500)
     },
   })
+  renderPending()
 }
 
 function renderMain(): void {
@@ -672,12 +752,14 @@ async function refreshAccount(): Promise<void> {
   $('dtitle').textContent = email ? `Sesión: ${email}` : 'Cuenta'
 }
 
-$('new').onclick = async () => {
+async function newNote(): Promise<void> {
   const n = await createNote('')
   qEl.value = ''
   notes = await allNotes()
   open(n.id)
 }
+
+$('new').onclick = newNote
 
 $('mapbtn').onclick = () => openPanel('map')
 $('calbtn').onclick = () => openPanel('cal')
@@ -859,6 +941,11 @@ edEl.oninput = async () => {
   queueSync()
 }
 
+pvEl.onchange = (e) => {
+  const b = e.target as HTMLInputElement
+  if (b.type === 'checkbox' && b.dataset.line && currentId) void toggleTask(currentId, Number(b.dataset.line))
+}
+
 pvEl.onclick = async (e) => {
   const a = (e.target as HTMLElement).closest('a.wl') as HTMLElement | null
   if (!a) return
@@ -915,6 +1002,72 @@ $('dlogout').onclick = async () => {
   statusEl.textContent = 'Sin iniciar sesión'
 }
 $('dclose').onclick = () => dlg.close()
+
+const bmsg = $('bmsg')
+$('bjson').onclick = async () => {
+  bmsg.textContent = `${await exportJson()} notas exportadas`
+}
+$('bmd').onclick = async () => {
+  bmsg.textContent = `${await exportMarkdown()} notas exportadas`
+}
+$('bimp').onclick = () => $<HTMLInputElement>('bfile').click()
+$<HTMLInputElement>('bfile').onchange = async (e) => {
+  const input = e.target as HTMLInputElement
+  const f = input.files?.[0]
+  input.value = ''
+  if (!f) return
+  try {
+    const r = await importBackup(f)
+    bmsg.textContent = `Importado: ${r.added} notas nuevas, ${r.versions} versiones en historial, ${r.events} eventos`
+    await reload()
+    queueSync(500)
+  } catch (err) {
+    bmsg.textContent = err instanceof Error ? err.message : 'No se pudo importar'
+  }
+}
+
+const hdlg = $<HTMLDialogElement>('hdlg')
+const hList = $('hlist')
+$('hclose').onclick = () => hdlg.close()
+$('hist').onclick = async () => {
+  const n = current()
+  if (!n) return
+  const list = await versionsOf(n.id)
+  hList.innerHTML = ''
+  if (!list.length) {
+    const none = document.createElement('div')
+    none.className = 'none'
+    none.textContent = 'Aún no hay versiones anteriores de esta nota.'
+    hList.append(none)
+  }
+  for (const v of list) {
+    const row = document.createElement('div')
+    row.className = 'vrow'
+    const info = document.createElement('div')
+    const when = document.createElement('b')
+    when.textContent = new Date(v.at).toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    const why = document.createElement('small')
+    why.textContent = v.why
+    const snip = document.createElement('p')
+    snip.textContent = v.body.replace(/\s+/g, ' ').trim().slice(0, 110)
+    info.append(when, why, snip)
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'btn small'
+    btn.textContent = 'Restaurar'
+    btn.onclick = async () => {
+      await addVersion(n, 'antes de restaurar', true)
+      await saveBody(n.id, v.body)
+      await setNodes(n.id, v.nodes)
+      hdlg.close()
+      await reload()
+      queueSync(500)
+    }
+    row.append(info, btn)
+    hList.append(row)
+  }
+  hdlg.showModal()
+}
 
 const eTitle = $<HTMLInputElement>('etitle')
 const eDate = $<HTMLInputElement>('edate')
@@ -1023,3 +1176,10 @@ await refreshAccount()
 startReminders(() => events, toast)
 void resyncPush()
 runSync()
+
+const accion = new URLSearchParams(location.search).get('accion')
+if (accion === 'nueva' || accion === 'dictar') {
+  history.replaceState(null, '', location.pathname)
+  await newNote()
+  if (accion === 'dictar') micBtn.click()
+}
