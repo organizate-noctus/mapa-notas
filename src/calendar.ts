@@ -30,7 +30,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', text = ''):
   return e
 }
 
-function row(e: CalEvent, h: CalHandlers, withDay: boolean): HTMLElement {
+export function eventRow(e: CalEvent, h: CalHandlers, withDay: boolean): HTMLElement {
   const r = el('div', e.state === 'done' ? 'ev done' : 'ev')
   const when = el('span', 'when', withDay ? fmtWhen(e) : e.allDay ? 'Todo el día' : fmtTime(e.at))
   const title = el('span', 'etitle', e.title)
@@ -113,13 +113,13 @@ export function renderCalendar(root: HTMLElement, all: CalEvent[], h: CalHandler
     el('h4', '', selected.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })),
   )
   const todays = (byDay.get(dkey(selected)) ?? []).sort((a, b) => a.at - b.at)
-  if (todays.length) for (const e of todays) agenda.append(row(e, h, false))
+  if (todays.length) for (const e of todays) agenda.append(eventRow(e, h, false))
   else agenda.append(el('div', 'none', 'Nada este día'))
 
   const limit = sod(new Date()).getTime()
   const upcoming = events.filter((e) => e.state === 'active' && e.at >= limit).slice(0, 8)
   agenda.append(el('h4', '', 'Próximos'))
-  if (upcoming.length) for (const e of upcoming) agenda.append(row(e, h, true))
+  if (upcoming.length) for (const e of upcoming) agenda.append(eventRow(e, h, true))
   else agenda.append(el('div', 'none', 'No hay eventos próximos'))
 
   const left = el('div', 'calleft')

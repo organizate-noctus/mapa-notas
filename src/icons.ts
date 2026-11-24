@@ -7,6 +7,8 @@ export const icons = {
     '<circle cx="6" cy="17" r="2"/><circle cx="12" cy="6.5" r="2"/><circle cx="18.5" cy="14" r="2"/><path d="M7.2 15.2 10.8 8.3M13.7 7.9l3.6 4.4M8 17.2l8.5-2.5"/>',
   ),
   folder: svg('<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2V17.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>', 18),
+  spark: svg('<path d="M12 4v4M12 16v4M4 12h4M16 12h4M7 7l2 2M15 15l2 2M17 7l-2 2M9 15l-2 2"/>', 18),
+  sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>'),
   history: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>', 18),
   calendar: svg(
     '<rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3.5v3M16 3.5v3"/>',

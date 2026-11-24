@@ -7,6 +7,7 @@ import { registerSW } from 'virtual:pwa-register'
 import { icons } from './icons'
 import { exportJson, exportMarkdown, importBackup } from './backup'
 import { pendingTasks, taskLines, toggleLine } from './tasks'
+import { suggestNodes, suggestTitle } from './suggest'
 import {
   addEvent,
   addVersion,
@@ -41,7 +42,8 @@ import {
 import { currentEmail, signIn, signOut, signUp, supabase, sync } from './sync'
 import { hideMap, refreshMap, showMap } from './graph'
 import { defaultRemind, detectEvents, fmtWhen, remindOptions, type Proposal } from './events'
-import { renderCalendar } from './calendar'
+import { renderCalendar, type CalHandlers } from './calendar'
+import { renderToday } from './today'
 import { enableNotifications, notificationsState, startReminders } from './reminders'
 import { disablePush, enablePush, pushActive, pushSupported, resyncPush } from './push'
 import { Recorder, loadModel, modelCached, transcribe } from './voice'
@@ -53,6 +55,7 @@ root.innerHTML = `
   <nav class="rail" id="rail" aria-label="Secciones">
     <span class="mark">${icons.mark}</span>
     <button class="tab on" id="tabnotes">${icons.notes}<span>Notas</span></button>
+    <button class="tab" id="todaybtn">${icons.sun}<span>Hoy</span></button>
     <button class="tab" id="foldbtn">${icons.folder}<span>Carpetas</span></button>
     <button class="tab" id="mapbtn">${icons.map}<span>Mapa</span></button>
     <button class="tab" id="calbtn">${icons.calendar}<span>Agenda</span></button>
@@ -111,6 +114,9 @@ root.innerHTML = `
       <div id="graph"></div>
       <div class="maphud"><div class="card"><span><i class="nota"></i>Nota</span><span><i class="nodo"></i>Nodo</span><span id="mapinfo"></span></div></div>
       <div class="maphint">Arrastra para girar · rueda o pellizco para acercar · toca una nota para abrirla</div>
+    </div>
+    <div id="todayview" hidden>
+      <div id="todaybody"></div>
     </div>
     <div id="foldview" hidden>
       <div class="pagehead"><h2>Carpetas</h2></div>
@@ -210,9 +216,17 @@ const toastEl = $('toast')
 const docEl = $('doc')
 const pulseEl = $('pulse')
 const micBtn = $<HTMLButtonElement>('mic')
-const tabs: Record<string, HTMLElement> = { none: $('tabnotes'), folders: $('foldbtn'), map: $('mapbtn'), cal: $('calbtn') }
+const todayEl = $('todayview')
+const todayBody = $('todaybody')
+const tabs: Record<string, HTMLElement> = {
+  none: $('tabnotes'),
+  today: $('todaybtn'),
+  folders: $('foldbtn'),
+  map: $('mapbtn'),
+  cal: $('calbtn'),
+}
 
-type Panel = 'none' | 'map' | 'cal' | 'folders'
+type Panel = 'none' | 'map' | 'cal' | 'folders' | 'today'
 
 const openFolders = new Set<string>()
 let foldersSeeded = false
@@ -348,12 +362,20 @@ async function toggleTask(noteId: string, line: number): Promise<void> {
   notes.sort((a, b) => b.updatedAt - a.updatedAt)
   renderList()
   if (panel === 'cal') renderCal()
+  else if (panel === 'today') renderTodayView()
   else if (reading) renderPreview()
   queueSync()
 }
 
-function renderPending(): void {
+function pendingSection(limit = Infinity): HTMLElement {
+  let left = limit
   const list = pendingTasks(notes)
+    .map(({ note, tasks }) => {
+      const take = tasks.slice(0, Math.max(0, left))
+      left -= take.length
+      return { note, tasks: take }
+    })
+    .filter((p) => p.tasks.length)
   const wrap = document.createElement('section')
   wrap.className = 'pendwrap'
   const h = document.createElement('h4')
@@ -385,7 +407,17 @@ function renderPending(): void {
     }
     wrap.append(box)
   }
-  calBody.append(wrap)
+  return wrap
+}
+
+function renderTodayView(): void {
+  renderToday(todayBody, {
+    events,
+    notes,
+    handlers: calHandlers,
+    pending: () => pendingSection(6),
+    openNote: (id) => open(id),
+  })
 }
 
 function renderNodeBar(): void {
@@ -561,12 +593,80 @@ function renderProposals(): void {
   const n = current()
   if (!n || panel !== 'none') return
   const props = detectEvents(n).filter((p) => !evKeys.has(p.key) && !evKeys.has(`${p.noteId}|${p.at}`))
+  const sugs = suggestionsFor(n)
+  if (sugs.length) {
+    const h = document.createElement('h4')
+    h.innerHTML = icons.spark
+    h.append('Sugerencias')
+    propEl.append(h)
+    for (const s of sugs) propEl.append(s)
+  }
   if (!props.length) return
   const h = document.createElement('h4')
   h.innerHTML = icons.calendar
   h.append('Eventos detectados')
   propEl.append(h)
   for (const p of props) propEl.append(proposalRow(p))
+}
+
+const dismissedSug = new Set<string>()
+
+function sugRow(id: string, label: string, apply: string, run: () => Promise<void>): HTMLElement {
+  const r = document.createElement('div')
+  r.className = 'pr'
+  const text = document.createElement('span')
+  text.className = 'ptext'
+  text.textContent = label
+  const ok = document.createElement('button')
+  ok.className = 'btn primary small'
+  ok.textContent = apply
+  ok.onclick = async () => {
+    await run()
+    queueSync(500)
+  }
+  const skip = document.createElement('button')
+  skip.className = 'btn ghost small'
+  skip.textContent = 'Ignorar'
+  skip.onclick = () => {
+    dismissedSug.add(id)
+    renderProposals()
+  }
+  r.append(text, ok, skip)
+  return r
+}
+
+async function applyBody(id: string, body: string): Promise<void> {
+  const saved = await saveBody(id, body)
+  if (!saved) return
+  const i = notes.findIndex((x) => x.id === saved.id)
+  notes[i] = saved
+  notes.sort((a, b) => b.updatedAt - a.updatedAt)
+  renderList()
+  renderMain()
+}
+
+function suggestionsFor(n: Note): HTMLElement[] {
+  const out: HTMLElement[] = []
+  const title = suggestTitle(n.body)
+  const tid = `${n.id}|t|${title}`
+  if (title && !dismissedSug.has(tid)) {
+    out.push(sugRow(tid, `Poner título «${title}»`, 'Poner', () => applyBody(n.id, `# ${title}\n\n${n.body.replace(/^\s+/, '')}`)))
+  }
+  for (const path of suggestNodes(n, notes)) {
+    const id = `${n.id}|n|${pathKey(path)}`
+    if (dismissedSug.has(id)) continue
+    out.push(
+      sugRow(id, `Añadir al nodo «${showPath(path)}»`, 'Añadir', async () => {
+        const saved = await setNodes(n.id, [...n.nodes, path])
+        if (!saved) return
+        const i = notes.findIndex((x) => x.id === saved.id)
+        notes[i] = saved
+        renderList()
+        renderMain()
+      }),
+    )
+  }
+  return out
 }
 
 function proposalRow(p: Proposal): HTMLElement {
@@ -610,23 +710,25 @@ async function saveProposal(p: Proposal, remindMin: number, state: EventState): 
   queueSync(500)
 }
 
+const calHandlers: CalHandlers = {
+  openNote: (id) => open(id),
+  toggleDone: async (e) => {
+    await patchEvent(e.id, { state: e.state === 'done' ? 'active' : 'done' })
+    await reloadEvents()
+    queueSync(500)
+  },
+  remove: async (e) => {
+    if (!confirm(`¿Borrar «${e.title}»?`)) return
+    await removeEvent(e.id)
+    await reloadEvents()
+    queueSync(500)
+  },
+}
+
 function renderCal(): void {
   void refreshAvisos()
-  renderCalendar(calBody, events, {
-    openNote: (id) => open(id),
-    toggleDone: async (e) => {
-      await patchEvent(e.id, { state: e.state === 'done' ? 'active' : 'done' })
-      await reloadEvents()
-      queueSync(500)
-    },
-    remove: async (e) => {
-      if (!confirm(`¿Borrar «${e.title}»?`)) return
-      await removeEvent(e.id)
-      await reloadEvents()
-      queueSync(500)
-    },
-  })
-  renderPending()
+  renderCalendar(calBody, events, calHandlers)
+  calBody.append(pendingSection())
 }
 
 function renderMain(): void {
@@ -635,6 +737,7 @@ function renderMain(): void {
   mapEl.hidden = panel !== 'map'
   calEl.hidden = panel !== 'cal'
   foldEl.hidden = panel !== 'folders'
+  todayEl.hidden = panel !== 'today'
   barEl.hidden = inPanel || !n
   nodebarEl.hidden = inPanel || !n
   emptyEl.hidden = inPanel || !!n
@@ -666,7 +769,7 @@ function closePanel(): void {
   panel = 'none'
 }
 
-async function openPanel(p: 'map' | 'cal' | 'folders'): Promise<void> {
+async function openPanel(p: 'map' | 'cal' | 'folders' | 'today'): Promise<void> {
   if (panel === p) {
     closePanel()
     renderList()
@@ -683,6 +786,10 @@ async function openPanel(p: 'map' | 'cal' | 'folders'): Promise<void> {
   }
   if (p === 'folders') {
     renderFolders()
+    return
+  }
+  if (p === 'today') {
+    renderTodayView()
     return
   }
   mapInfo.textContent = 'Cargando…'
@@ -702,6 +809,7 @@ async function reloadEvents(): Promise<void> {
   events = await allEvents()
   evKeys = await eventKeys()
   if (panel === 'cal') renderCal()
+  else if (panel === 'today') renderTodayView()
   else if (panel === 'none') renderProposals()
 }
 
@@ -712,6 +820,7 @@ async function reload(): Promise<void> {
   renderMain()
   if (panel === 'map') mapInfo.textContent = refreshMap(notes)
   if (panel === 'folders') renderFolders()
+  if (panel === 'today') renderTodayView()
   await reloadEvents()
 }
 
@@ -764,6 +873,7 @@ $('new').onclick = newNote
 $('mapbtn').onclick = () => openPanel('map')
 $('calbtn').onclick = () => openPanel('cal')
 $('foldbtn').onclick = () => openPanel('folders')
+$('todaybtn').onclick = () => openPanel('today')
 
 type VoiceState = 'idle' | 'loading' | 'recording' | 'transcribing'
 
@@ -1182,4 +1292,6 @@ if (accion === 'nueva' || accion === 'dictar') {
   history.replaceState(null, '', location.pathname)
   await newNote()
   if (accion === 'dictar') micBtn.click()
+} else if (notes.length && !currentId) {
+  await openPanel('today')
 }
